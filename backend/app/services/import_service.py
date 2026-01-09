@@ -271,20 +271,50 @@ class ImportService:
                 else:
                     unmatched_txns.append(txn_data)
 
-            # Step 3: Send unmatched to LLM classifier
+            # Step 3: Check learned merchant categories first
+            learned_txns = []
+            still_unmatched = []
+
+            for txn in unmatched_txns:
+                merchant_normalized = txn.get('merchant_normalized', '')
+                if merchant_normalized:
+                    from app.models.merchant_category import MerchantCategory
+                    learned = self.db.query(MerchantCategory).filter(
+                        MerchantCategory.user_id == 'default_user',
+                        MerchantCategory.merchant_normalized == merchant_normalized
+                    ).first()
+
+                    if learned:
+                        # Apply learned category
+                        learned.times_applied += 1
+                        learned_txns.append({
+                            **txn,
+                            'transaction_type': 'EXPENSE',
+                            'category': learned.category,
+                            'is_spend': True,
+                            'is_income': False,
+                            'classification_method': 'LEARNED',
+                            'confidence': learned.confidence,
+                            'needs_review': False
+                        })
+                        continue
+
+                still_unmatched.append(txn)
+
+            # Step 4: Send remaining unmatched to LLM classifier
             llm_classified_txns = []
 
-            if unmatched_txns and settings.ENABLE_LLM_CLASSIFICATION:
-                classified_results = self.llm_classifier.classify_batch(unmatched_txns)
+            if still_unmatched and settings.ENABLE_LLM_CLASSIFICATION:
+                classified_results = self.llm_classifier.classify_batch(still_unmatched)
                 llm_classified_txns = classified_results
             else:
                 # If LLM disabled, use default classification
                 llm_classified_txns = [
-                    self._default_classification(txn) for txn in unmatched_txns
+                    self._default_classification(txn) for txn in still_unmatched
                 ]
 
-            # Step 4: Merge original transaction data with classifications and insert
-            all_classified = rule_matched_txns + llm_classified_txns
+            # Step 5: Merge all classified transactions and insert
+            all_classified = rule_matched_txns + learned_txns + llm_classified_txns
 
             successfully_inserted = 0
             duplicate_count = 0
@@ -376,11 +406,40 @@ class ImportService:
     def _default_classification(self, txn_data: Dict[str, Any]) -> Dict[str, Any]:
         """Apply default classification when LLM is disabled or fails.
 
-        Uses pattern-based rules to intelligently categorize transactions.
+        Priority order:
+        1. Check learned merchant categories (user corrections)
+        2. Apply keyword-based rules for transaction types
+        3. Use merchant pattern matching for categories
         """
-        description = txn_data.get('description_raw', '').upper()
+        from app.models.merchant_category import MerchantCategory
 
-        # Determine transaction type first
+        description = txn_data.get('description_raw', '').upper()
+        merchant_normalized = txn_data.get('merchant_normalized', '')
+
+        # Priority 1: Check if we've learned a category for this merchant
+        if merchant_normalized:
+            learned = self.db.query(MerchantCategory).filter(
+                MerchantCategory.user_id == 'default_user',
+                MerchantCategory.merchant_normalized == merchant_normalized
+            ).first()
+
+            if learned:
+                # Apply learned category and increment usage counter
+                learned.times_applied += 1
+                self.db.flush()  # Update counter immediately
+
+                return {
+                    **txn_data,
+                    'transaction_type': 'EXPENSE',  # Assume expense for learned categories
+                    'category': learned.category,
+                    'is_spend': True,
+                    'is_income': False,
+                    'classification_method': 'LEARNED',
+                    'confidence': learned.confidence,
+                    'needs_review': False
+                }
+
+        # Priority 2: Determine transaction type from keywords
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
             txn_type = 'PAYMENT'
             is_spend = False
@@ -412,7 +471,7 @@ class ImportService:
             is_spend = True
             is_income = False
 
-            # Smart category matching based on merchant patterns
+            # Priority 3: Smart category matching based on merchant patterns
             category = self._categorize_by_merchant(description)
 
         return {

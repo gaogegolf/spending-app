@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
+from app.models.merchant_category import MerchantCategory
 from app.schemas.transaction import (
     TransactionCreate,
     TransactionUpdate,
@@ -139,8 +140,12 @@ def update_transaction(
         # Re-calculate is_spend and is_income based on new type
         transaction.set_is_spend_based_on_type()
 
-    if transaction_data.category is not None:
+    # Track if category was manually changed (for learning)
+    category_changed = False
+    if transaction_data.category is not None and transaction_data.category != transaction.category:
         transaction.category = transaction_data.category
+        category_changed = True
+
     if transaction_data.subcategory is not None:
         transaction.subcategory = transaction_data.subcategory
     if transaction_data.tags is not None:
@@ -152,6 +157,15 @@ def update_transaction(
 
     # Mark as manually edited
     transaction.classification_method = 'MANUAL'
+
+    # Learn merchant category mapping when user manually categorizes
+    if category_changed and transaction.merchant_normalized and transaction.category:
+        _learn_merchant_category(
+            db=db,
+            merchant_normalized=transaction.merchant_normalized,
+            category=transaction.category,
+            user_id='default_user'
+        )
 
     db.commit()
     db.refresh(transaction)
@@ -318,19 +332,42 @@ def reclassify_all_transactions(
 
             if matched_rule:
                 classified = rule_engine.apply_rule_to_data(matched_rule, txn_data)
-            elif settings.ENABLE_LLM_CLASSIFICATION:
-                # Try LLM classification for single transaction
-                try:
-                    classified_batch = llm_classifier.classify_batch([txn_data])
-                    classified = classified_batch[0] if classified_batch else None
-                except Exception:
-                    classified = None
             else:
+                # Check learned merchant categories next
+                merchant_normalized = transaction.merchant_normalized
                 classified = None
 
-            # Fallback to rule-based classification
-            if not classified:
-                classified = import_service._default_classification(txn_data)
+                if merchant_normalized:
+                    learned = db.query(MerchantCategory).filter(
+                        MerchantCategory.user_id == 'default_user',
+                        MerchantCategory.merchant_normalized == merchant_normalized
+                    ).first()
+
+                    if learned:
+                        # Apply learned category
+                        learned.times_applied += 1
+                        classified = {
+                            **txn_data,
+                            'transaction_type': 'EXPENSE',
+                            'category': learned.category,
+                            'is_spend': True,
+                            'is_income': False,
+                            'classification_method': 'LEARNED',
+                            'confidence': learned.confidence,
+                            'needs_review': False
+                        }
+
+                # Try LLM if no learned category
+                if not classified and settings.ENABLE_LLM_CLASSIFICATION:
+                    try:
+                        classified_batch = llm_classifier.classify_batch([txn_data])
+                        classified = classified_batch[0] if classified_batch else None
+                    except Exception:
+                        classified = None
+
+                # Fallback to keyword-based classification
+                if not classified:
+                    classified = import_service._default_classification(txn_data)
 
             # Update transaction with new classification
             if classified and 'category' in classified:
@@ -348,3 +385,46 @@ def reclassify_all_transactions(
         "total_transactions": len(transactions),
         "message": f"Successfully re-classified {reclassified_count} transactions"
     }
+
+
+def _learn_merchant_category(db: Session, merchant_normalized: str, category: str, user_id: str = 'default_user'):
+    """Learn or update merchant category mapping.
+
+    When a user manually categorizes a transaction, we save the merchant → category mapping
+    for future auto-categorization.
+
+    Args:
+        db: Database session
+        merchant_normalized: Normalized merchant name
+        category: Category name (can be custom or predefined)
+        user_id: User ID (defaults to 'default_user')
+    """
+    import uuid
+    from datetime import datetime
+
+    # Check if mapping already exists
+    existing = db.query(MerchantCategory).filter(
+        MerchantCategory.user_id == user_id,
+        MerchantCategory.merchant_normalized == merchant_normalized
+    ).first()
+
+    if existing:
+        # Update existing mapping
+        existing.category = category
+        existing.updated_at = datetime.utcnow()
+        existing.confidence = 1.0  # User-provided = 100% confidence
+        existing.source = 'USER'
+    else:
+        # Create new mapping
+        new_mapping = MerchantCategory(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            merchant_normalized=merchant_normalized,
+            category=category,
+            confidence=1.0,
+            source='USER',
+            times_applied=0
+        )
+        db.add(new_mapping)
+
+    # Note: commit happens in the calling function

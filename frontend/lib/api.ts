@@ -148,3 +148,37 @@ export async function getMonthlySummary(year: number, month: number, accountId?:
   if (!response.ok) throw new Error('Failed to fetch monthly summary');
   return response.json();
 }
+
+export async function getYearlySummary(year: number, accountId?: string) {
+  const queryParams = new URLSearchParams({ year: String(year) });
+  if (accountId) {
+    queryParams.append('account_id', accountId);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/stats/yearly?${queryParams}`);
+  if (!response.ok) throw new Error('Failed to fetch yearly summary');
+  return response.json();
+}
+
+export async function getCategoryBreakdown(startDate: string, endDate: string, accountId?: string) {
+  const queryParams = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (accountId) {
+    queryParams.append('account_id', accountId);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/stats/category-breakdown?${queryParams}`);
+  if (!response.ok) throw new Error('Failed to fetch category breakdown');
+  return response.json();
+}
+
+export async function getMerchantAnalysis(startDate: string, endDate: string, limit: number = 10) {
+  const queryParams = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    limit: String(limit)
+  });
+
+  const response = await fetch(`${API_BASE_URL}/stats/merchant-analysis?${queryParams}`);
+  if (!response.ok) throw new Error('Failed to fetch merchant analysis');
+  return response.json();
+}

@@ -27,6 +27,7 @@ class ClassificationMethod(str, enum.Enum):
     RULE = "RULE"  # Matched user rule
     MANUAL = "MANUAL"  # User manual edit
     DEFAULT = "DEFAULT"  # Default classification
+    LEARNED = "LEARNED"  # Learned from user corrections
 
 
 class Transaction(Base):

@@ -100,6 +100,7 @@ spending-app/
 │   ├── next.config.js               # API proxy configuration
 │   └── tailwind.config.ts
 └── README.md
+```
 
 ## Quick Start Guide
 

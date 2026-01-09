@@ -1,8 +1,39 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions } from '@/lib/api';
+import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
+
+// Empower-style categories
+const CATEGORIES = [
+  'Restaurants',
+  'Groceries',
+  'Gasoline/Fuel',
+  'Automotive',
+  'Shopping',
+  'Clothes',
+  'Entertainment',
+  'Travel',
+  'Bills & Utilities',
+  'Health & Fitness',
+  'Personal Care',
+  'Education',
+  'Gifts & Donations',
+  'Home',
+  'Taxes',
+  'Fees & Charges',
+  'Coffee Shops',
+  'Fast Food',
+  'Alcohol & Bars',
+  'Pharmacy',
+  'Pet Care',
+  'Electronics',
+  'Books',
+  'Office Supplies',
+  'Subscriptions',
+  'Insurance',
+  'Other Expenses',
+];
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -15,6 +46,14 @@ export default function TransactionsPage() {
   const [deleting, setDeleting] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [reclassifySuccess, setReclassifySuccess] = useState<string | null>(null);
+
+  // Category editing state
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [savingCategory, setSavingCategory] = useState(false);
+
+  // Type editing state
+  const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
+  const [savingType, setSavingType] = useState(false);
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -196,6 +235,46 @@ export default function TransactionsPage() {
       setError(err instanceof Error ? err.message : 'Failed to reclassify transactions');
     } finally {
       setReclassifying(false);
+    }
+  }
+
+  async function handleCategoryChange(transactionId: string, newCategory: string) {
+    try {
+      setSavingCategory(true);
+      setError(null);
+
+      await updateTransaction(transactionId, { category: newCategory });
+
+      // Update the transaction in local state
+      setTransactions(transactions.map(t =>
+        t.id === transactionId ? { ...t, category: newCategory, classification_method: 'MANUAL' } : t
+      ));
+
+      setEditingCategoryId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update category');
+    } finally {
+      setSavingCategory(false);
+    }
+  }
+
+  async function handleTypeChange(transactionId: string, newType: string) {
+    try {
+      setSavingType(true);
+      setError(null);
+
+      await updateTransaction(transactionId, { transaction_type: newType });
+
+      // Update the transaction in local state
+      setTransactions(transactions.map(t =>
+        t.id === transactionId ? { ...t, transaction_type: newType, classification_method: 'MANUAL' } : t
+      ));
+
+      setEditingTypeId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update transaction type');
+    } finally {
+      setSavingType(false);
     }
   }
 
@@ -381,17 +460,22 @@ export default function TransactionsPage() {
             <label htmlFor="category-filter" className="block text-sm font-medium text-gray-700 mb-1">
               Category
             </label>
-            <input
-              type="text"
+            <select
               id="category-filter"
               value={categoryFilter}
               onChange={(e) => {
                 setCategoryFilter(e.target.value);
                 setPage(1);
               }}
-              placeholder="Enter category..."
               className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
+            >
+              <option value="">All Categories</option>
+              {CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Needs Review Filter */}
@@ -574,12 +658,63 @@ export default function TransactionsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {transaction.category || '-'}
+                      {editingCategoryId === transaction.id ? (
+                        <select
+                          autoFocus
+                          disabled={savingCategory}
+                          defaultValue={transaction.category || ''}
+                          onChange={(e) => handleCategoryChange(transaction.id, e.target.value)}
+                          onBlur={() => setEditingCategoryId(null)}
+                          className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                        >
+                          <option value="">Select category...</option>
+                          {CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>
+                              {cat}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setEditingCategoryId(transaction.id)}
+                          className="text-left hover:text-indigo-600 hover:underline focus:outline-none focus:text-indigo-600 w-full"
+                          title="Click to change category"
+                        >
+                          {transaction.category || '-'}
+                          {transaction.classification_method === 'LEARNED' && (
+                            <span className="ml-1 text-xs text-green-600" title="Learned from your edits">✓</span>
+                          )}
+                        </button>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)}`}>
-                        {transaction.transaction_type}
-                      </span>
+                      {editingTypeId === transaction.id ? (
+                        <select
+                          autoFocus
+                          disabled={savingType}
+                          defaultValue={transaction.transaction_type}
+                          onChange={(e) => handleTypeChange(transaction.id, e.target.value)}
+                          onBlur={() => setEditingTypeId(null)}
+                          className="px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
+                        >
+                          <option value="EXPENSE">Expense</option>
+                          <option value="INCOME">Income</option>
+                          <option value="PAYMENT">Payment</option>
+                          <option value="REFUND">Refund</option>
+                          <option value="TRANSFER">Transfer</option>
+                          <option value="FEE_INTEREST">Fee/Interest</option>
+                        </select>
+                      ) : (
+                        <button
+                          onClick={() => setEditingTypeId(transaction.id)}
+                          className="focus:outline-none"
+                          title="Click to change type"
+                        >
+                          <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)} hover:ring-2 hover:ring-indigo-300 cursor-pointer transition-all`}>
+                            {transaction.transaction_type}
+                          </span>
+                        </button>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                       <span className={transaction.is_spend ? 'text-red-600' : transaction.is_income ? 'text-green-600' : 'text-gray-900'}>
