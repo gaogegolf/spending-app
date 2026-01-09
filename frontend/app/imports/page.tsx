@@ -65,12 +65,17 @@ export default function ImportsPage() {
           console.log('Parse result:', parseResult);
 
           // Check if parsing was successful
-          if (parseResult.status === 'FAILED') {
-            console.error('Parse failed:', parseResult.error_message);
+          if (parseResult.success === false || parseResult.errors?.length > 0) {
+            const errorMsg = parseResult.errors ? parseResult.errors.join(', ') : 'Failed to parse file';
+            console.error('Parse failed:', errorMsg);
             results.push({
-              ...parseResult,
-              error_message: parseResult.error_message || 'Failed to parse file'
-            });
+              id: uploadResult.id,
+              filename: file.name,
+              status: 'FAILED',
+              error_message: errorMsg,
+              transactions_imported: 0,
+              transactions_duplicate: 0,
+            } as ImportRecord);
             continue;
           }
 

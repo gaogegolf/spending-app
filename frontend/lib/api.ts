@@ -55,7 +55,13 @@ export async function commitImport(importId: string) {
   const response = await fetch(`${API_BASE_URL}/imports/${importId}/commit`, {
     method: 'POST',
   });
-  if (!response.ok) throw new Error('Failed to commit import');
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Commit failed:', response.status, errorText);
+    throw new Error(`Failed to commit import: ${response.status} - ${errorText}`);
+  }
+
   return response.json();
 }
 
