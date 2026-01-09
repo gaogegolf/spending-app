@@ -33,7 +33,13 @@ export async function uploadFile(accountId: string, file: File) {
     method: 'POST',
     body: formData,
   });
-  if (!response.ok) throw new Error('Failed to upload file');
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('Upload failed:', response.status, errorText);
+    throw new Error(`Failed to upload file: ${response.status} - ${errorText}`);
+  }
+
   return response.json();
 }
 

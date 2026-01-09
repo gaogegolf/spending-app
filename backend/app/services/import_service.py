@@ -70,16 +70,16 @@ class ImportService:
         file_hash = hashlib.sha256(file_content).hexdigest()
         await file.seek(0)  # Reset file pointer
 
-        # Check if this file was already imported
+        # Check if this file was already imported (warn but allow re-import)
         existing = self.db.query(ImportRecord).filter(
             ImportRecord.account_id == account_id,
             ImportRecord.file_hash == file_hash
         ).first()
 
         if existing:
-            raise ValueError(
-                f"This file was already imported on {existing.created_at}. "
-                f"Import ID: {existing.id}"
+            logger.warning(
+                f"File was previously imported on {existing.created_at}. "
+                f"Import ID: {existing.id}. Allowing re-import."
             )
 
         # Save file to disk

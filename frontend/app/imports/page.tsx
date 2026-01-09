@@ -29,6 +29,9 @@ export default function ImportsPage() {
 
   async function handleFileUpload(e: React.FormEvent) {
     e.preventDefault();
+
+    console.log('Form submitted', { selectedAccount, filesCount: files.length });
+
     if (!selectedAccount || files.length === 0) {
       setError('Please select an account and at least one file');
       return;
@@ -47,16 +50,23 @@ export default function ImportsPage() {
         setCurrentFileIndex(i);
         const file = files[i];
 
+        console.log(`Processing file ${i + 1}/${files.length}:`, file.name);
+
         try {
           // Upload file
+          console.log('Uploading file...');
           const uploadResult = await uploadFile(selectedAccount, file);
+          console.log('Upload result:', uploadResult);
 
           // Parse file
           setStep('processing');
+          console.log('Parsing file...');
           const parseResult = await parseImport(uploadResult.id);
+          console.log('Parse result:', parseResult);
 
           // Check if parsing was successful
           if (parseResult.status === 'FAILED') {
+            console.error('Parse failed:', parseResult.error_message);
             results.push({
               ...parseResult,
               error_message: parseResult.error_message || 'Failed to parse file'
@@ -65,9 +75,12 @@ export default function ImportsPage() {
           }
 
           // Commit import
+          console.log('Committing import...');
           const commitResult = await commitImport(uploadResult.id);
+          console.log('Commit result:', commitResult);
           results.push(commitResult);
         } catch (err) {
+          console.error('File processing error:', err);
           results.push({
             id: '',
             filename: file.name,
@@ -82,6 +95,7 @@ export default function ImportsPage() {
       setImportRecords(results);
       setStep('complete');
     } catch (err) {
+      console.error('Import error:', err);
       setError(err instanceof Error ? err.message : 'Import failed');
       setStep('select');
     } finally {
@@ -185,7 +199,7 @@ export default function ImportsPage() {
               ) : (
                 <>
                   <span className="mr-2">🚀</span>
-                  Import {files.length} File{files.length !== 1 ? 's' : ''}
+                  {files.length > 0 ? `Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Import Transactions'}
                 </>
               )}
             </button>
