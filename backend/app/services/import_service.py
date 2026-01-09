@@ -286,9 +286,23 @@ class ImportService:
             # Step 4: Merge original transaction data with classifications and insert
             all_classified = rule_matched_txns + llm_classified_txns
 
+            transactions_to_insert = []
+            duplicate_count = 0
+
             for i, classified_data in enumerate(all_classified):
                 # Get the original transaction data
                 original_txn = new_txns[i] if i < len(new_txns) else {}
+
+                # Check for duplicates BEFORE creating the transaction object
+                txn_hash = self.dedup_service.generate_hash(import_record.account_id, original_txn)
+                existing = self.db.query(Transaction).filter(
+                    Transaction.hash_dedup_key == txn_hash
+                ).first()
+
+                if existing:
+                    logger.info(f"Skipping duplicate transaction: {original_txn.get('description_raw', 'Unknown')}")
+                    duplicate_count += 1
+                    continue
 
                 # Merge original transaction data with classification
                 # Original data has: date, amount, description_raw, merchant_normalized, currency, is_credit
@@ -303,30 +317,32 @@ class ImportService:
 
                 # Convert date from string to date object if needed
                 if 'date' in merged_data and isinstance(merged_data['date'], str):
-                    from datetime import datetime
                     merged_data['date'] = datetime.fromisoformat(merged_data['date']).date()
 
                 if 'post_date' in merged_data and isinstance(merged_data['post_date'], str):
-                    from datetime import datetime
                     merged_data['post_date'] = datetime.fromisoformat(merged_data['post_date']).date()
 
                 transaction = Transaction(
                     account_id=import_record.account_id,
                     import_id=import_record.id,
-                    hash_dedup_key=self.dedup_service.generate_hash(import_record.account_id, original_txn),
+                    hash_dedup_key=txn_hash,
                     **merged_data
                 )
 
                 # Ensure is_spend and is_income are set based on transaction_type
                 transaction.set_is_spend_based_on_type()
 
-                self.db.add(transaction)
+                transactions_to_insert.append(transaction)
+
+            # Bulk insert all non-duplicate transactions
+            if transactions_to_insert:
+                self.db.add_all(transactions_to_insert)
 
             self.db.commit()
 
             # Update import record
             import_record.status = ImportStatus.SUCCESS
-            import_record.transactions_imported = len(all_classified)
+            import_record.transactions_imported = len(transactions_to_insert)
             import_record.transactions_duplicate = duplicate_count
             import_record.completed_at = datetime.utcnow()
             self.db.commit()
