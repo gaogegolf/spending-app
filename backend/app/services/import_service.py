@@ -3,12 +3,15 @@
 import os
 import hashlib
 import shutil
+import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
 
 from sqlalchemy.orm import Session
 from fastapi import UploadFile
+
+logger = logging.getLogger(__name__)
 
 from app.models.import_record import ImportRecord, SourceType, ImportStatus
 from app.models.transaction import Transaction

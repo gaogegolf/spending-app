@@ -13,7 +13,7 @@ class TransactionBase(BaseModel):
 
     date: date
     description_raw: str
-    amount: Decimal = Field(..., ge=0, description="Always positive")
+    amount: Decimal = Field(..., description="Transaction amount (can be negative for expenses in some formats)")
     currency: str = Field(default="USD", min_length=3, max_length=3)
 
 
