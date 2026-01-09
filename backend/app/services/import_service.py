@@ -286,21 +286,30 @@ class ImportService:
             # Step 4: Merge original transaction data with classifications and insert
             all_classified = rule_matched_txns + llm_classified_txns
 
-            transactions_to_insert = []
+            successfully_inserted = 0
             duplicate_count = 0
+            seen_hashes = set()  # Track hashes within this batch to avoid within-batch duplicates
 
             for i, classified_data in enumerate(all_classified):
                 # Get the original transaction data
                 original_txn = new_txns[i] if i < len(new_txns) else {}
 
-                # Check for duplicates BEFORE creating the transaction object
+                # Generate hash for deduplication
                 txn_hash = self.dedup_service.generate_hash(import_record.account_id, original_txn)
+
+                # Check for duplicates in database
                 existing = self.db.query(Transaction).filter(
                     Transaction.hash_dedup_key == txn_hash
                 ).first()
 
                 if existing:
-                    logger.info(f"Skipping duplicate transaction: {original_txn.get('description_raw', 'Unknown')}")
+                    logger.info(f"Skipping duplicate transaction (already in DB): {original_txn.get('description_raw', 'Unknown')}")
+                    duplicate_count += 1
+                    continue
+
+                # Check for duplicates within current batch
+                if txn_hash in seen_hashes:
+                    logger.info(f"Skipping duplicate transaction (within batch): {original_txn.get('description_raw', 'Unknown')}")
                     duplicate_count += 1
                     continue
 
@@ -332,17 +341,22 @@ class ImportService:
                 # Ensure is_spend and is_income are set based on transaction_type
                 transaction.set_is_spend_based_on_type()
 
-                transactions_to_insert.append(transaction)
-
-            # Bulk insert all non-duplicate transactions
-            if transactions_to_insert:
-                self.db.add_all(transactions_to_insert)
+                # Insert immediately with error handling
+                try:
+                    self.db.add(transaction)
+                    self.db.flush()  # Flush to detect constraint violations immediately
+                    seen_hashes.add(txn_hash)  # Mark as seen after successful flush
+                    successfully_inserted += 1
+                except Exception as e:
+                    logger.warning(f"Failed to insert transaction (constraint violation): {str(e)}")
+                    self.db.rollback()  # Rollback to recover from error
+                    duplicate_count += 1
 
             self.db.commit()
 
             # Update import record
             import_record.status = ImportStatus.SUCCESS
-            import_record.transactions_imported = len(transactions_to_insert)
+            import_record.transactions_imported = successfully_inserted
             import_record.transactions_duplicate = duplicate_count
             import_record.completed_at = datetime.utcnow()
             self.db.commit()
@@ -360,42 +374,272 @@ class ImportService:
         return self.upload_dir / f"{import_record.id}_{import_record.filename}"
 
     def _default_classification(self, txn_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply default classification when LLM is disabled."""
+        """Apply default classification when LLM is disabled or fails.
+
+        Uses pattern-based rules to intelligently categorize transactions.
+        """
         description = txn_data.get('description_raw', '').upper()
 
-        # Simple keyword-based classification
+        # Determine transaction type first
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
             txn_type = 'PAYMENT'
             is_spend = False
             is_income = False
-        elif any(keyword in description for keyword in ['SALARY', 'PAYROLL', 'DEPOSIT']):
+            category = None
+        elif any(keyword in description for keyword in ['SALARY', 'PAYROLL', 'DEPOSIT', 'DIRECT DEP']):
             txn_type = 'INCOME'
             is_spend = False
             is_income = True
-        elif any(keyword in description for keyword in ['TRANSFER', 'ZELLE', 'VENMO']):
+            category = None
+        elif any(keyword in description for keyword in ['TRANSFER', 'ZELLE', 'VENMO', 'CASHOUT']):
             txn_type = 'TRANSFER'
             is_spend = False
             is_income = False
-        elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL']):
+            category = None
+        elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
             txn_type = 'REFUND'
             is_spend = False
             is_income = False
+            category = None
+        elif any(keyword in description for keyword in ['LATE FEE', 'ANNUAL FEE', 'OVERDRAFT', 'INTEREST CHARGE']):
+            txn_type = 'FEE_INTEREST'
+            is_spend = True
+            is_income = False
+            category = 'Service Charges/Fees'
         else:
-            # Default to EXPENSE
+            # Default to EXPENSE and categorize
             txn_type = 'EXPENSE'
             is_spend = True
             is_income = False
 
+            # Smart category matching based on merchant patterns
+            category = self._categorize_by_merchant(description)
+
         return {
             **txn_data,
             'transaction_type': txn_type,
-            'category': 'Uncategorized',
+            'category': category,
             'is_spend': is_spend,
             'is_income': is_income,
             'classification_method': 'DEFAULT',
-            'confidence': 0.5,
-            'needs_review': True
+            'confidence': 0.7,
+            'needs_review': False
         }
+
+    def _categorize_by_merchant(self, description: str) -> str:
+        """Categorize transaction based on merchant name patterns using Empower categories.
+
+        Args:
+            description: Transaction description (should be uppercase)
+
+        Returns:
+            Category name
+        """
+        # Restaurants (most specific food category)
+        restaurant_keywords = ['RESTAURANT', 'CAFE', 'COFFEE', 'STARBUCKS', 'MCDONALDS', 'BURGER', 'PIZZA',
+                              'CHIPOTLE', 'PANERA', 'SUBWAY', 'DOORDASH', 'UBER EATS', 'GRUBHUB', 'POSTMATES',
+                              'DINING', 'KITCHEN', 'BISTRO', 'GRILL', 'SUSHI', 'BAR', 'LUNCH', 'BREAKFAST',
+                              'WENDYS', 'TACO BELL', 'KFC', 'ARBYS', 'DOMINO', 'DINER', 'BUFFET',
+                              'CHILI', 'RAMEN', 'MANDARIN', 'CUISINE', 'CREPEVINE', 'PANDA EXPRESS',
+                              'IN-N-OUT', 'FIVE GUYS', 'SHAKE SHACK', 'OLIVE GARDEN', 'APPLEBEES',
+                              'OUTBACK', 'TEXAS ROADHOUSE', 'CHEESECAKE FACTORY', 'PF CHANG',
+                              'BENIHANA', 'BOBA', 'TEA HOUSE', 'POKE', 'TAQUERIA', 'BBQ', 'STEAKHOUSE',
+                              'SQ *', 'PY *', 'NUTRITION']  # Square & PayPal payments often restaurants
+        if any(kw in description for kw in restaurant_keywords):
+            return 'Restaurants'
+
+        # Groceries (separate from restaurants)
+        grocery_keywords = ['WHOLE FOODS', 'SAFEWAY', 'TRADER JOE', 'GROCERY', 'MARKET', 'KROGER',
+                           'ALBERTSONS', 'FOOD LION', 'PUBLIX', 'WEGMANS', 'HEB', 'ALDI', 'COSTCO',
+                           'SAMS CLUB', 'SUPERMARKET', 'FRESH', 'PRODUCE', 'WEEE', 'FOODLAND',
+                           'FARMERS MARKET', 'ASIAN MARKET', 'RANCH 99', '99 RANCH']
+        if any(kw in description for kw in grocery_keywords):
+            return 'Groceries'
+
+        # Gasoline/Fuel (specific category)
+        fuel_keywords = ['SHELL', 'CHEVRON', 'MOBIL', 'EXXON', 'BP ', 'ARCO', 'VALERO', '76', 'MARATHON',
+                        'GAS STATION', 'FUEL', 'PETRO', 'CIRCLE K', 'SPEEDWAY', 'PILOT', 'FLYING J']
+        if any(kw in description for kw in fuel_keywords):
+            return 'Gasoline/Fuel'
+
+        # Automotive (car-related but not fuel)
+        automotive_keywords = ['AUTO', 'CAR WASH', 'JIFFY LUBE', 'MIDAS', 'TIRE', 'BRAKE', 'MEINEKE',
+                              'PEP BOYS', 'AUTOZONE', 'NAPA', 'O REILLY', 'CAR PARTS', 'MECHANIC',
+                              'SMOG', 'REGISTRATION', 'DMV', 'PARKING', 'GARAGE', 'CHARGEPOINT',
+                              'CARFAX', 'CALTRAIN', 'TRANSIT', 'TRAIN', 'METRO', 'BUS', 'BART',
+                              'TOLL', 'FASTRAK', 'EZ PASS']
+        if any(kw in description for kw in automotive_keywords):
+            return 'Automotive'
+
+        # Travel (hotels, airlines, etc.)
+        travel_keywords = ['AIRLINE', 'AIRWAYS', 'UNITED', 'DELTA', 'AMERICAN AIR', 'SOUTHWEST', 'JETBLUE',
+                          'HOTEL', 'MARRIOTT', 'HILTON', 'HYATT', 'AIRBNB', 'EXPEDIA', 'BOOKING.COM',
+                          'TRAVEL', 'TRIP', 'VACATION', 'RESORT', 'INN', 'MOTEL', 'RENTAL CAR',
+                          'HERTZ', 'ENTERPRISE', 'AVIS', 'BUDGET']
+        if any(kw in description for kw in travel_keywords):
+            return 'Travel'
+
+        # Utilities
+        utilities_keywords = ['PG&E', 'EDISON', 'ELECTRIC', 'GAS COMPANY', 'WATER DISTRICT', 'UTILITY',
+                             'POWER', 'ENERGY', 'WATER BILL', 'SEWER', 'WASTE MANAGEMENT', 'TRASH']
+        if any(kw in description for kw in utilities_keywords):
+            return 'Utilities'
+
+        # Cable/Satellite & Internet
+        cable_keywords = ['COMCAST', 'XFINITY', 'SPECTRUM', 'COX', 'FRONTIER', 'CENTURYLINK',
+                         'DIRECTV', 'DISH NETWORK', 'CABLE', 'INTERNET', 'BROADBAND', 'FIBER']
+        if any(kw in description for kw in cable_keywords):
+            return 'Cable/Satellite'
+
+        # Telephone
+        phone_keywords = ['VERIZON', 'AT&T', 'T-MOBILE', 'SPRINT', 'PHONE', 'WIRELESS', 'CELLULAR',
+                         'MOBILE', 'CRICKET', 'METRO PCS', 'BOOST MOBILE']
+        if any(kw in description for kw in phone_keywords):
+            return 'Telephone'
+
+        # Healthcare/Medical
+        healthcare_keywords = ['CVS', 'WALGREENS', 'RITE AID', 'PHARMACY', 'KAISER', 'BLUE SHIELD',
+                              'DOCTOR', 'DENTAL', 'DENTIST', 'MEDICAL', 'HOSPITAL', 'CLINIC',
+                              'OPTOMETRY', 'VISION', 'HEALTH', 'URGENT CARE', 'LABS', 'IMAGING']
+        if any(kw in description for kw in healthcare_keywords):
+            return 'Healthcare/Medical'
+
+        # Insurance
+        insurance_keywords = ['INSURANCE', 'GEICO', 'STATE FARM', 'ALLSTATE', 'PROGRESSIVE', 'LIBERTY MUTUAL',
+                             'FARMERS INS', 'USAA', 'AAA', 'POLICY', 'PREMIUM']
+        if any(kw in description for kw in insurance_keywords):
+            return 'Insurance'
+
+        # Personal Care
+        personal_keywords = ['GYM', 'FITNESS', '24 HOUR', 'LA FITNESS', 'PLANET FITNESS', 'EQUINOX',
+                            'SALON', 'BARBER', 'SPA', 'MASSAGE', 'SEPHORA', 'ULTA', 'BEAUTY',
+                            'NAILS', 'HAIRCUT', 'YOGA', 'CROSSFIT']
+        if any(kw in description for kw in personal_keywords):
+            return 'Personal Care'
+
+        # Entertainment
+        entertainment_keywords = ['NETFLIX', 'HULU', 'DISNEY', 'HBO', 'SPOTIFY', 'APPLE MUSIC',
+                                 'YOUTUBE', 'TWITCH', 'THEATER', 'CINEMA', 'MOVIE', 'AMC', 'REGAL',
+                                 'PLAYSTATION', 'XBOX', 'NINTENDO', 'STEAM', 'GAME', 'CONCERT',
+                                 'TICKETMASTER', 'STUBHUB', 'AQUARIUM', 'MUSEUM', 'ZOO', 'AMUSEMENT',
+                                 'THEME PARK', 'CHUCK E CHEESE', 'DAVE AND BUSTER', 'BOWL', 'ARCADE',
+                                 'WINERY', 'VINEYARD', 'SCENIC', 'CURIODYSSEY', 'MONTEREY BAY']
+        if any(kw in description for kw in entertainment_keywords):
+            return 'Entertainment'
+
+        # Dues & Subscriptions
+        subscription_keywords = ['ADOBE', 'MICROSOFT 365', 'OFFICE 365', 'ICLOUD', 'DROPBOX',
+                                'GITHUB', 'LINKEDIN', 'PATREON', 'SUBSTACK', 'SUBSCRIPTION',
+                                'MEMBERSHIP', 'ANNUAL FEE', 'MONTHLY FEE']
+        if any(kw in description for kw in subscription_keywords):
+            return 'Dues & Subscriptions'
+
+        # Home Improvement
+        home_improvement_keywords = ['HOME DEPOT', 'LOWES', 'ACE HARDWARE', 'MENARDS', 'TRUE VALUE',
+                                    'HARDWARE', 'LUMBER', 'CONSTRUCTION', 'REMODEL', 'RENOVATION',
+                                    'SOLAR', 'PANEL', 'ROOFING']
+        if any(kw in description for kw in home_improvement_keywords):
+            return 'Home Improvement'
+
+        # Home Maintenance
+        home_maintenance_keywords = ['PLUMBER', 'ELECTRICIAN', 'CONTRACTOR', 'REPAIR', 'MAINTENANCE',
+                                    'HVAC', 'HEATING', 'COOLING', 'ROOFING', 'PAINTING', 'CLEANING',
+                                    'LAWN', 'GARDEN', 'LANDSCAPE', 'MAID', 'HANDYMAN']
+        if any(kw in description for kw in home_maintenance_keywords):
+            return 'Home Maintenance'
+
+        # Pets/Pet Care
+        pet_keywords = ['PETCO', 'PETSMART', 'VET', 'VETERINARY', 'PET', 'ANIMAL HOSPITAL',
+                       'DOG', 'CAT', 'GROOMING']
+        if any(kw in description for kw in pet_keywords):
+            return 'Pets/Pet Care'
+
+        # Education
+        education_keywords = ['UNIVERSITY', 'COLLEGE', 'SCHOOL', 'TUITION', 'COURSERA', 'UDEMY',
+                             'EDUCATION', 'LEARNING', 'TEXTBOOK', 'HOMEROOM', 'ACADEMY', 'INSTITUTE',
+                             'BOOKSTORE', 'BOOKS', 'LINDEN TREE']
+        if any(kw in description for kw in education_keywords):
+            return 'Education'
+
+        # Electronics
+        electronics_keywords = ['BEST BUY', 'APPLE STORE', 'MICROSOFT STORE', 'ELECTRONICS', 'COMPUTER',
+                               'LAPTOP', 'PHONE STORE', 'TECH', 'GEEK SQUAD', 'MICRO CENTER']
+        if any(kw in description for kw in electronics_keywords):
+            return 'Electronics'
+
+        # Clothing/Shoes
+        clothing_keywords = ['MACYS', 'NORDSTROM', 'KOHLS', 'GAP ', 'OLD NAVY', 'BANANA REPUBLIC',
+                            'FOREVER 21', 'H&M', ' HM ', 'ZARA', 'NIKE', 'ADIDAS', 'CLOTHING', 'APPAREL',
+                            'SHOES', 'FOOTWEAR', 'FASHION', 'UNIQLO', 'CROCS', 'JEANS', 'VANS',
+                            'CONVERSE', 'SKECHERS', 'DRESS', 'SUIT', 'TUXEDO', 'DILLARD', 'BLOOMINGDALE',
+                            'NEIMAN MARCUS', 'SAKS', 'JCPENNEY', 'NORDSTROM RACK', 'OFF 5TH',
+                            'ATHLETIC', 'FOOTLOCKER', 'FINISH LINE', 'DICK SPORTING', 'REI']
+        if any(kw in description for kw in clothing_keywords):
+            return 'Clothing/Shoes'
+
+        # Charitable Giving
+        charity_keywords = ['DONATION', 'CHARITY', 'FOUNDATION', 'NON-PROFIT', 'GOODWILL',
+                           'SALVATION ARMY', 'RED CROSS', 'UNITED WAY', 'GIVING']
+        if any(kw in description for kw in charity_keywords):
+            return 'Charitable Giving'
+
+        # Gifts
+        gift_keywords = ['GIFT', 'FLOWERS', 'FLORIST', '1-800-FLOWERS', 'EDIBLE ARRANGEMENTS',
+                        'HALLMARK', 'CARD STORE']
+        if any(kw in description for kw in gift_keywords):
+            return 'Gifts'
+
+        # Hobbies
+        hobby_keywords = ['HOBBY', 'CRAFT', 'MICHAELS', 'JOANN', 'FABRIC', 'ART SUPPLY',
+                         'MUSIC STORE', 'INSTRUMENT', 'SPORTING GOODS', 'BICYCLE', 'BIKE SHOP',
+                         'SPORTS', 'TENNIS', 'GOLF', 'SWIM']
+        if any(kw in description for kw in hobby_keywords):
+            return 'Hobbies'
+
+        # Online Services
+        online_keywords = ['PAYPAL', 'VENMO', 'SQUARE', 'STRIPE', 'ONLINE', 'DIGITAL', 'CLOUD',
+                          'HOSTING', 'DOMAIN', 'WEB']
+        if any(kw in description for kw in online_keywords):
+            return 'Online Services'
+
+        # Taxes
+        tax_keywords = ['TAX BOARD', 'FRANCHISE TAX', 'IRS', 'TAX PAYMENT', 'PROPERTY TAX',
+                       'INCOME TAX', 'STATE TAX', 'FEDERAL TAX', 'TAX RETURN', 'US TREAS TAX']
+        if any(kw in description for kw in tax_keywords):
+            return 'Taxes'
+
+        # ATM/Cash
+        atm_keywords = ['ATM', 'CASH WITHDRAWAL', 'CASH ADVANCE', 'WITHDRAW']
+        if any(kw in description for kw in atm_keywords):
+            return 'ATM/Cash'
+
+        # Groceries (additional patterns - check again for meat/butcher shops & convenience stores)
+        grocery_keywords2 = ['MEAT HOUSE', 'BUTCHER', 'SEAFOOD', 'FISH MARKET', '7-ELEVEN', '7 ELEVEN',
+                            'CONVENIENCE', 'CORNER STORE', 'MINI MART', 'ABC STORE', 'ABC #']
+        if any(kw in description for kw in grocery_keywords2):
+            return 'Groceries'
+
+        # Pets/Pet Care (additional patterns)
+        pet_keywords2 = ['CHEWY', 'PET SUPPLIES', 'PET FOOD']
+        if any(kw in description for kw in pet_keywords2):
+            return 'Pets/Pet Care'
+
+        # Travel (additional patterns - cruise lines, vacation packages, scenic drives)
+        travel_keywords2 = ['CRUISE', 'DCL', 'CARNIVAL', 'ROYAL CARIBBEAN', 'NORWEGIAN',
+                           'PRINCESS CRUISES', 'VACATION PACKAGE', '17 MILE DRIVE', 'SCENIC DRIVE',
+                           'GATES', 'RESERVATIONS']
+        if any(kw in description for kw in travel_keywords2):
+            return 'Travel'
+
+        # General Merchandise (big box stores)
+        general_merchandise_keywords = ['AMAZON', 'TARGET', 'WALMART', 'COSTCO', 'SAMS CLUB',
+                                       'BJS', 'DOLLAR', 'TJ MAXX', 'MARSHALLS', 'ROSS',
+                                       'BED BATH', 'IKEA', 'JEWI', 'JEWELRY']
+        if any(kw in description for kw in general_merchandise_keywords):
+            return 'General Merchandise'
+
+        # Default to Other Expenses for unrecognized merchants
+        return 'Other Expenses'
 
     async def delete_import(self, import_id: str) -> None:
         """Delete an import record and its uploaded file.

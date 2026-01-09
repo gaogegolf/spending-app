@@ -112,6 +112,31 @@ export async function updateTransaction(id: string, data: {
   return response.json();
 }
 
+export async function deleteTransaction(id: string) {
+  const response = await fetch(`${API_BASE_URL}/transactions/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete transaction');
+}
+
+export async function bulkDeleteTransactions(transactionIds: string[]) {
+  const response = await fetch(`${API_BASE_URL}/transactions/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(transactionIds),
+  });
+  if (!response.ok) throw new Error('Failed to delete transactions');
+  return response.json();
+}
+
+export async function reclassifyAllTransactions() {
+  const response = await fetch(`${API_BASE_URL}/transactions/reclassify-all`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to reclassify transactions');
+  return response.json();
+}
+
 // Stats API
 export async function getMonthlySummary(year: number, month: number, accountId?: string) {
   const queryParams = new URLSearchParams({ year: String(year), month: String(month) });

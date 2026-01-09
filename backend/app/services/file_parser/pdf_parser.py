@@ -21,6 +21,7 @@ class PDFParser(BaseParser):
         self.file_path = file_path
         self.pdf = None
         self.tables = []
+        self.statement_year = None  # Extract from PDF header
 
     def parse(self) -> ParseResult:
         """Parse PDF file and return transactions."""
@@ -30,6 +31,9 @@ class PDFParser(BaseParser):
 
         try:
             self.pdf = pdfplumber.open(self.file_path)
+
+            # Extract statement year from PDF header
+            self.statement_year = self._extract_statement_year()
 
             # Extract all tables from all pages
             self.tables = self.extract_tables()
@@ -132,6 +136,48 @@ class PDFParser(BaseParser):
         finally:
             if self.pdf:
                 self.pdf.close()
+
+    def _extract_statement_year(self) -> int:
+        """Extract statement year from PDF header.
+
+        Fidelity statements have formats like:
+        - "November2025 Statement"
+        - "Closing Date:11/24/2025"
+
+        Returns:
+            Statement year (e.g., 2025), defaults to current year if not found
+        """
+        try:
+            if not self.pdf or len(self.pdf.pages) == 0:
+                return datetime.now().year
+
+            # Get first page text
+            first_page_text = self.pdf.pages[0].extract_text()
+
+            if not first_page_text:
+                return datetime.now().year
+
+            # Look for "Closing Date: MM/DD/YYYY" pattern (most reliable)
+            closing_date_match = re.search(r'Closing Date:\s*(\d{2})/(\d{2})/(\d{4})', first_page_text)
+            if closing_date_match:
+                return int(closing_date_match.group(3))
+
+            # Look for "MonthYYYY Statement" pattern (e.g., "November2025 Statement")
+            month_year_match = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d{4})\s+Statement', first_page_text)
+            if month_year_match:
+                return int(month_year_match.group(2))
+
+            # Fallback: look for any 4-digit year in the first 500 characters
+            year_match = re.search(r'\b(20\d{2})\b', first_page_text[:500])
+            if year_match:
+                return int(year_match.group(1))
+
+            # Default to current year if nothing found
+            return datetime.now().year
+
+        except Exception as e:
+            print(f"Failed to extract statement year: {str(e)}")
+            return datetime.now().year
 
     def extract_tables(self) -> List[pd.DataFrame]:
         """Extract all tables from PDF."""
@@ -259,15 +305,19 @@ class PDFParser(BaseParser):
                             description = f"{description} {next_line}"
                             i += 1  # Skip the next line since we consumed it
 
-                    # Parse date (use post_date) - assuming current or previous year
-                    # For Nov statement, dates will be 11/XX (November 2025)
-                    current_year = datetime.now().year
+                    # Parse date (use post_date) with statement year
+                    # Extract month and day from MM/DD format
                     month = int(post_date.split('/')[0])
                     day = int(post_date.split('/')[1])
 
-                    # If month is later in year, assume current year, else previous year
-                    # For simplicity, assume all dates in current year
-                    parsed_date = datetime(current_year, month, day).date()
+                    # Use the statement year extracted from PDF header
+                    # Handle year boundary: if statement is in January but transaction is in December,
+                    # the transaction is from the previous year
+                    statement_year = self.statement_year if self.statement_year else datetime.now().year
+
+                    # If transaction month is much later than we'd expect (e.g., December transaction
+                    # in a January statement), use previous year
+                    parsed_date = datetime(statement_year, month, day).date()
 
                     # Clean merchant description
                     cleaned_merchant = self.clean_merchant_description(description)
@@ -419,8 +469,19 @@ class PDFParser(BaseParser):
                amount_str.lower() in ['nan', 'none']:
                 return None
 
-            # Parse date
-            parsed_date = pd.to_datetime(date_str).date()
+            # Parse date - handle both MM/DD and MM/DD/YYYY formats
+            try:
+                # Try parsing as-is (works if YYYY is included)
+                parsed_date = pd.to_datetime(date_str).date()
+            except:
+                # If that fails, assume MM/DD format and add statement year
+                try:
+                    month, day = date_str.split('/')
+                    statement_year = self.statement_year if self.statement_year else datetime.now().year
+                    parsed_date = datetime(statement_year, int(month), int(day)).date()
+                except:
+                    # If all parsing fails, skip this row
+                    return None
 
             # Clean merchant description (remove phone numbers and state codes)
             cleaned_merchant = self.clean_merchant_description(description)

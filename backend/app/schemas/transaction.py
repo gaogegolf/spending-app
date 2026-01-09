@@ -83,7 +83,7 @@ class TransactionFilter(BaseModel):
     is_spend: Optional[bool] = None
     needs_review: Optional[bool] = None
     page: int = Field(default=1, ge=1)
-    page_size: int = Field(default=50, ge=1, le=500)
+    page_size: int = Field(default=50, ge=1, le=10000)
 
 
 class TransactionListResponse(BaseModel):

@@ -28,7 +28,7 @@ def list_transactions(
     is_spend: Optional[bool] = Query(None),
     needs_review: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=500),
+    page_size: int = Query(50, ge=1, le=10000),
     db: Session = Depends(get_db)
 ):
     """List transactions with filters and pagination.
@@ -231,3 +231,120 @@ def delete_transaction(
 
     db.delete(transaction)
     db.commit()
+
+
+@router.post("/transactions/bulk-delete", response_model=dict)
+def bulk_delete_transactions(
+    transaction_ids: list[str],
+    db: Session = Depends(get_db)
+):
+    """Bulk delete multiple transactions.
+
+    Args:
+        transaction_ids: List of transaction IDs to delete
+        db: Database session
+
+    Returns:
+        Delete summary
+    """
+    transactions = db.query(Transaction).filter(
+        Transaction.id.in_(transaction_ids)
+    ).all()
+
+    deleted_count = len(transactions)
+
+    for transaction in transactions:
+        db.delete(transaction)
+
+    db.commit()
+
+    return {
+        "deleted_count": deleted_count,
+        "transaction_ids": [t.id for t in transactions]
+    }
+
+
+@router.post("/transactions/reclassify-all", response_model=dict)
+def reclassify_all_transactions(
+    db: Session = Depends(get_db)
+):
+    """Re-classify all existing transactions using the latest classification logic.
+
+    Returns:
+        Summary of re-classification
+    """
+    from app.services.classifier.llm_classifier import LLMClassifier
+    from app.services.classifier.rule_engine import RuleEngine
+    from app.services.import_service import ImportService
+    from app.config import settings
+
+    # Get all transactions
+    transactions = db.query(Transaction).all()
+
+    if not transactions:
+        return {
+            "reclassified_count": 0,
+            "message": "No transactions to reclassify"
+        }
+
+    # Initialize classifiers
+    llm_classifier = LLMClassifier()
+    rule_engine = RuleEngine(db)
+    import_service = ImportService(db)
+
+    reclassified_count = 0
+
+    # Process in batches
+    batch_size = 20
+    for i in range(0, len(transactions), batch_size):
+        batch = transactions[i:i + batch_size]
+
+        for transaction in batch:
+            # Skip payments, transfers, income, refunds (keep their type)
+            if transaction.transaction_type in ['PAYMENT', 'TRANSFER', 'INCOME', 'REFUND']:
+                continue
+
+            # Convert to dict format for classification
+            txn_data = {
+                'date': transaction.date.isoformat(),
+                'description_raw': transaction.description_raw,
+                'amount': float(transaction.amount),
+                'merchant_normalized': transaction.merchant_normalized,
+                'currency': transaction.currency,
+            }
+
+            # Try rule engine first
+            matched_rule = rule_engine.match_transaction_data(txn_data)
+
+            if matched_rule:
+                classified = rule_engine.apply_rule_to_data(matched_rule, txn_data)
+            elif settings.ENABLE_LLM_CLASSIFICATION:
+                # Try LLM classification for single transaction
+                try:
+                    classified_batch = llm_classifier.classify_batch([txn_data])
+                    classified = classified_batch[0] if classified_batch else None
+                except Exception:
+                    classified = None
+            else:
+                classified = None
+
+            # Fallback to rule-based classification
+            if not classified:
+                classified = import_service._default_classification(txn_data)
+
+            # Update transaction with new classification
+            if classified and 'category' in classified:
+                transaction.category = classified.get('category')
+                transaction.subcategory = classified.get('subcategory')
+                transaction.transaction_type = classified.get('transaction_type', transaction.transaction_type)
+                transaction.classification_method = classified.get('classification_method', 'RECLASSIFIED')
+                transaction.confidence = classified.get('confidence', 0.7)
+                reclassified_count += 1
+
+    db.commit()
+
+    return {
+        "reclassified_count": reclassified_count,
+        "total_transactions": len(transactions),
+        "message": f"Successfully re-classified {reclassified_count} transactions"
+    }
