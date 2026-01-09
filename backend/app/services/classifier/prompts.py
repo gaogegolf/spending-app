@@ -33,17 +33,48 @@ TRANSACTION TYPES:
 - FEE_INTEREST: Fees, interest charges, late fees (is_spend=true, is_income=false)
 
 CATEGORIES (for EXPENSE and FEE_INTEREST types):
-- Food & Dining: Restaurants, groceries, coffee shops
-- Transportation: Gas, uber, parking, public transit
-- Shopping: Retail, online shopping, clothing
-- Bills & Utilities: Internet, phone, electricity, water
-- Healthcare: Doctor, pharmacy, insurance
-- Entertainment: Movies, concerts, streaming services
-- Travel: Hotels, flights, car rentals
-- Personal Care: Hair, gym, spa
-- Education: Tuition, books, courses
-- Gifts & Donations: Presents, charity
-- Other: Anything that doesn't fit above categories
+Choose the MOST SPECIFIC category that matches. Only use "Other" as a last resort.
+
+- Food & Dining: Restaurants, fast food, groceries, coffee shops, bakeries, food delivery
+  Examples: STARBUCKS, MCDONALDS, WHOLE FOODS, DOORDASH, UBER EATS, CHIPOTLE
+
+- Transportation: Gas stations, uber/lyft, parking, public transit, tolls, car service
+  Examples: SHELL, CHEVRON, UBER, LYFT, PARKING, METRO, EZ PASS
+
+- Shopping: Retail stores, online shopping, clothing, electronics, home goods, Amazon
+  Examples: AMAZON, TARGET, WALMART, BEST BUY, COSTCO, MACY'S, IKEA
+
+- Bills & Utilities: Internet, phone, cable TV, electricity, water, gas, trash
+  Examples: COMCAST, VERIZON, AT&T, PG&E, SOUTHERN CALIFORNIA EDISON, SPECTRUM
+
+- Healthcare: Doctor visits, pharmacy, dental, vision, medical insurance, health services
+  Examples: CVS PHARMACY, WALGREENS, KAISER, BLUE SHIELD, DENTIST, OPTOMETRIST
+
+- Entertainment: Movies, concerts, streaming, gaming, hobbies, sports events
+  Examples: NETFLIX, SPOTIFY, HULU, AMC THEATERS, PLAYSTATION, XBOX, DISNEY+
+
+- Travel: Hotels, flights, car rentals, vacation expenses, luggage, travel insurance
+  Examples: MARRIOTT, HILTON, UNITED AIRLINES, HERTZ, AIRBNB, EXPEDIA
+
+- Personal Care: Haircuts, gym membership, spa, beauty products, fitness
+  Examples: LA FITNESS, 24 HOUR FITNESS, SEPHORA, ULTA, HAIR SALON, SPA
+
+- Education: Tuition, textbooks, courses, educational materials, school supplies
+  Examples: UNIVERSITY, COLLEGE, COURSERA, UDEMY, AMAZON BOOKS, SCHOOL
+
+- Home & Garden: Home improvement, furniture, garden supplies, home repairs, maintenance
+  Examples: HOME DEPOT, LOWES, FURNITURE STORE, GARDENING, PLUMBER, ELECTRICIAN
+
+- Gifts & Donations: Presents, charity donations, fundraising, gift cards
+  Examples: CHARITY, DONATION, GIFT CARD, GOFUNDME, RED CROSS
+
+- Subscriptions: Recurring digital services, memberships, software subscriptions
+  Examples: ADOBE, MICROSOFT 365, ICLOUD, DROPBOX, ZOOM, LINKEDIN PREMIUM
+
+- Pet Care: Pet food, vet visits, pet supplies, grooming
+  Examples: PETCO, PETSMART, VET, VETERINARY, PET GROOMING
+
+- Other: ONLY use this if the transaction truly doesn't fit any category above
 
 OUTPUT FORMAT:
 You must respond with a valid JSON array. Each transaction must have these fields:
@@ -88,6 +119,12 @@ Remember the critical rules:
 - REFUND → is_spend=false
 - FEE_INTEREST → is_spend=true
 - EXPENSE → is_spend=true
+
+IMPORTANT FOR CATEGORIES:
+- Be SPECIFIC - match to the most appropriate category from the list
+- Use contextual clues from merchant names (COMCAST = Bills & Utilities, AMAZON = Shopping, etc.)
+- ONLY use "Other" if the transaction truly doesn't fit any specific category
+- Consider common merchant patterns (e.g., food delivery apps, streaming services, retailers)
 
 Output only the JSON array, no markdown or explanatory text."""
 
