@@ -65,9 +65,15 @@ export default function TransactionsPage() {
   const [accountFilter, setAccountFilter] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [descriptionFilter, setDescriptionFilter] = useState<string>('');
   const [needsReviewFilter, setNeedsReviewFilter] = useState<boolean | undefined>(undefined);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+
+  // Sorting state
+  type SortColumn = 'date' | 'description' | 'category' | 'type' | 'amount' | 'review';
+  const [sortColumn, setSortColumn] = useState<SortColumn>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     loadAccounts();
@@ -75,7 +81,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     loadTransactions();
-  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, needsReviewFilter, startDate, endDate]);
+  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, descriptionFilter, needsReviewFilter, startDate, endDate]);
 
   // Lock body scroll when modal is open (only for single delete)
   useEffect(() => {
@@ -107,6 +113,7 @@ export default function TransactionsPage() {
         account_id: accountFilter || undefined,
         transaction_type: typeFilter || undefined,
         category: categoryFilter || undefined,
+        description: descriptionFilter || undefined,
         needs_review: needsReviewFilter,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
@@ -127,6 +134,7 @@ export default function TransactionsPage() {
     setAccountFilter('');
     setTypeFilter('');
     setCategoryFilter('');
+    setDescriptionFilter('');
     setNeedsReviewFilter(undefined);
     setStartDate('');
     setEndDate('');
@@ -171,10 +179,10 @@ export default function TransactionsPage() {
   }
 
   function toggleSelectAll() {
-    if (selectedIds.size === transactions.length) {
+    if (selectedIds.size === sortedTransactions.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(transactions.map(t => t.id)));
+      setSelectedIds(new Set(sortedTransactions.map(t => t.id)));
     }
   }
 
@@ -286,9 +294,16 @@ export default function TransactionsPage() {
   }
 
   function calculateDisplayedTotal(): number {
-    return transactions.reduce((sum, transaction) => {
+    return sortedTransactions.reduce((sum, transaction) => {
       const amount = parseFloat(transaction.amount);
-      return sum + amount;
+      // Subtract expenses, add income
+      if (transaction.is_spend) {
+        return sum - amount;
+      } else if (transaction.is_income) {
+        return sum + amount;
+      }
+      // For other types (transfers, payments, etc.), don't include in net
+      return sum;
     }, 0);
   }
 
@@ -310,6 +325,62 @@ export default function TransactionsPage() {
         return 'bg-gray-100 text-gray-800';
     }
   }
+
+  function handleSort(column: SortColumn) {
+    if (sortColumn === column) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to descending for date/amount, ascending for others
+      setSortColumn(column);
+      setSortDirection(column === 'date' || column === 'amount' ? 'desc' : 'asc');
+    }
+  }
+
+  function getSortIcon(column: SortColumn) {
+    if (sortColumn !== column) {
+      return (
+        <span className="ml-1 text-gray-400">⇅</span>
+      );
+    }
+    return sortDirection === 'asc' ? (
+      <span className="ml-1 text-indigo-600">↑</span>
+    ) : (
+      <span className="ml-1 text-indigo-600">↓</span>
+    );
+  }
+
+  // Sort transactions
+  const sortedTransactions = [...transactions].sort((a, b) => {
+    let comparison = 0;
+
+    switch (sortColumn) {
+      case 'date':
+        comparison = new Date(a.date).getTime() - new Date(b.date).getTime();
+        break;
+      case 'description':
+        const descA = (a.merchant_normalized || a.description_raw).toLowerCase();
+        const descB = (b.merchant_normalized || b.description_raw).toLowerCase();
+        comparison = descA.localeCompare(descB);
+        break;
+      case 'category':
+        const catA = (a.category || '').toLowerCase();
+        const catB = (b.category || '').toLowerCase();
+        comparison = catA.localeCompare(catB);
+        break;
+      case 'type':
+        comparison = a.transaction_type.localeCompare(b.transaction_type);
+        break;
+      case 'amount':
+        comparison = parseFloat(a.amount) - parseFloat(b.amount);
+        break;
+      case 'review':
+        comparison = (a.needs_review ? 1 : 0) - (b.needs_review ? 1 : 0);
+        break;
+    }
+
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -478,6 +549,24 @@ export default function TransactionsPage() {
             </select>
           </div>
 
+          {/* Description Filter */}
+          <div>
+            <label htmlFor="description-filter" className="block text-sm font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <input
+              type="text"
+              id="description-filter"
+              value={descriptionFilter}
+              onChange={(e) => {
+                setDescriptionFilter(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search description..."
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+            />
+          </div>
+
           {/* Needs Review Filter */}
           <div>
             <label htmlFor="review-filter" className="block text-sm font-medium text-gray-700 mb-1">
@@ -523,6 +612,72 @@ export default function TransactionsPage() {
       {error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-800">{error}</p>
+        </div>
+      )}
+
+      {/* Summary Bar - Moved to top */}
+      {!loading && transactions.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-4 mb-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            {/* Results count and page size */}
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="text-sm text-gray-700">
+                Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to{' '}
+                <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
+                <span className="font-medium">{total}</span> results
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="page-size-top" className="text-sm text-gray-700">
+                  Show:
+                </label>
+                <select
+                  id="page-size-top"
+                  value={pageSize}
+                  onChange={(e) => {
+                    const newSize = parseInt(e.target.value);
+                    setPageSize(newSize);
+                    setPage(1);
+                    setSelectedIds(new Set());
+                  }}
+                  className="px-2 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                  <option value="1000">1000</option>
+                  <option value="10000">All</option>
+                </select>
+              </div>
+              {/* Pagination buttons */}
+              {total > pageSize && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPage(page - 1)}
+                    disabled={page === 1}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setPage(page + 1)}
+                    disabled={page * pageSize >= total}
+                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Net Amount */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-600">Net Amount:</span>
+              <span className={`text-lg font-bold ${calculateDisplayedTotal() >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {calculateDisplayedTotal() >= 0 ? '+' : '-'}${Math.abs(calculateDisplayedTotal()).toFixed(2)}
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -610,28 +765,58 @@ export default function TransactionsPage() {
                   <th className="px-4 py-3 text-left">
                     <input
                       type="checkbox"
-                      checked={selectedIds.size === transactions.length && transactions.length > 0}
+                      checked={selectedIds.size === sortedTransactions.length && sortedTransactions.length > 0}
                       onChange={toggleSelectAll}
                       className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
                     />
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('date')}
+                  >
+                    <div className="flex items-center">
+                      Date{getSortIcon('date')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Description
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('description')}
+                  >
+                    <div className="flex items-center">
+                      Description{getSortIcon('description')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Category
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('category')}
+                  >
+                    <div className="flex items-center">
+                      Category{getSortIcon('category')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Type
+                  <th
+                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('type')}
+                  >
+                    <div className="flex items-center">
+                      Type{getSortIcon('type')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
+                  <th
+                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('amount')}
+                  >
+                    <div className="flex items-center justify-end">
+                      Amount{getSortIcon('amount')}
+                    </div>
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Review
+                  <th
+                    className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    onClick={() => handleSort('review')}
+                  >
+                    <div className="flex items-center justify-center">
+                      Review{getSortIcon('review')}
+                    </div>
                   </th>
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
@@ -639,7 +824,7 @@ export default function TransactionsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {transactions.map((transaction) => (
+                {sortedTransactions.map((transaction) => (
                   <tr key={transaction.id} className="hover:bg-gray-50">
                     <td className="px-4 py-4">
                       <input
@@ -743,73 +928,6 @@ export default function TransactionsPage() {
             </table>
           </div>
 
-          {/* Summary and Pagination */}
-          <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6 mt-4 rounded-lg shadow">
-            {/* Total Amount Display */}
-            <div className="mb-4 pb-4 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">Total Amount (Displayed):</span>
-                <span className="text-lg font-bold text-gray-900">
-                  ${calculateDisplayedTotal().toFixed(2)}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Sum of {transactions.length} transaction{transactions.length !== 1 ? 's' : ''} currently displayed
-              </p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="text-sm text-gray-700">
-                  Showing <span className="font-medium">{(page - 1) * pageSize + 1}</span> to{' '}
-                  <span className="font-medium">{Math.min(page * pageSize, total)}</span> of{' '}
-                  <span className="font-medium">{total}</span> results
-                </div>
-
-                {/* Page Size Selector */}
-                <div className="flex items-center gap-2">
-                  <label htmlFor="page-size" className="text-sm text-gray-700">
-                    Show:
-                  </label>
-                  <select
-                    id="page-size"
-                    value={pageSize}
-                    onChange={(e) => {
-                      const newSize = parseInt(e.target.value);
-                      setPageSize(newSize);
-                      setPage(1); // Reset to first page when changing page size
-                      setSelectedIds(new Set()); // Clear selections when changing page size
-                    }}
-                    className="px-2 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  >
-                    <option value="50">50</option>
-                    <option value="100">100</option>
-                    <option value="200">200</option>
-                    <option value="500">500</option>
-                    <option value="1000">1000</option>
-                    <option value="10000">All</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setPage(page - 1)}
-                  disabled={page === 1}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  Previous
-                </button>
-                <button
-                  onClick={() => setPage(page + 1)}
-                  disabled={page * pageSize >= total}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          </div>
         </>
       )}
 

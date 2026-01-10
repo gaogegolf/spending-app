@@ -216,11 +216,19 @@ class RuleEngine:
         if 'subcategory' in action:
             transaction.subcategory = action['subcategory']
 
-        # Apply spending flags
-        if 'is_spend' in action:
+        # Apply spending flags (only if explicitly set to True/False, not None)
+        if action.get('is_spend') is not None:
             transaction.is_spend = action['is_spend']
-        if 'is_income' in action:
+        if action.get('is_income') is not None:
             transaction.is_income = action['is_income']
+
+        # If transaction_type was set but is_spend/is_income weren't, infer from type
+        if 'transaction_type' in action:
+            txn_type = action['transaction_type']
+            if action.get('is_spend') is None:
+                transaction.is_spend = txn_type in ['EXPENSE', 'FEE_INTEREST']
+            if action.get('is_income') is None:
+                transaction.is_income = txn_type == 'INCOME'
 
         # Apply tags
         if 'tags' in action:
@@ -356,11 +364,19 @@ class RuleEngine:
         if 'subcategory' in action:
             result['subcategory'] = action['subcategory']
 
-        # Apply spending flags
-        if 'is_spend' in action:
+        # Apply spending flags (only if explicitly set to True/False, not None)
+        if action.get('is_spend') is not None:
             result['is_spend'] = action['is_spend']
-        if 'is_income' in action:
+        if action.get('is_income') is not None:
             result['is_income'] = action['is_income']
+
+        # If transaction_type was set but is_spend/is_income weren't, infer from type
+        if 'transaction_type' in action:
+            txn_type = action['transaction_type']
+            if action.get('is_spend') is None:
+                result['is_spend'] = txn_type in ['EXPENSE', 'FEE_INTEREST']
+            if action.get('is_income') is None:
+                result['is_income'] = txn_type == 'INCOME'
 
         # Apply tags
         if 'tags' in action:

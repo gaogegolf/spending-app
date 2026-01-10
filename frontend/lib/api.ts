@@ -78,6 +78,7 @@ export async function getTransactions(params?: {
   end_date?: string;
   transaction_type?: string;
   category?: string;
+  description?: string;
   needs_review?: boolean;
   page?: number;
   page_size?: number;
@@ -180,5 +181,199 @@ export async function getMerchantAnalysis(startDate: string, endDate: string, li
 
   const response = await fetch(`${API_BASE_URL}/stats/merchant-analysis?${queryParams}`);
   if (!response.ok) throw new Error('Failed to fetch merchant analysis');
+  return response.json();
+}
+
+// Merchant Categories API
+export async function getMerchantCategories(params?: {
+  merchant_search?: string;
+  source?: string;
+  category?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, String(value));
+      }
+    });
+  }
+
+  const url = `${API_BASE_URL}/merchant-categories${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch merchant categories');
+  return response.json();
+}
+
+export async function getMerchantCategoryCategories() {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories/categories`);
+  if (!response.ok) throw new Error('Failed to fetch categories');
+  return response.json();
+}
+
+export async function createMerchantCategory(data: {
+  merchant_normalized: string;
+  category: string;
+  source?: string;
+}) {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to create merchant category');
+  return response.json();
+}
+
+export async function updateMerchantCategory(id: string, data: {
+  category?: string;
+  confidence?: number;
+}) {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to update merchant category');
+  return response.json();
+}
+
+export async function deleteMerchantCategory(id: string) {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete merchant category');
+}
+
+export async function bulkDeleteMerchantCategories(ids: string[]) {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ids),
+  });
+  if (!response.ok) throw new Error('Failed to delete merchant categories');
+  return response.json();
+}
+
+// Rules API
+export async function getRules(params?: {
+  rule_type?: string;
+  is_active?: boolean;
+  search?: string;
+  page?: number;
+  page_size?: number;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, String(value));
+      }
+    });
+  }
+
+  const url = `${API_BASE_URL}/rules${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch rules');
+  return response.json();
+}
+
+export async function getRule(id: string) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}`);
+  if (!response.ok) throw new Error('Failed to fetch rule');
+  return response.json();
+}
+
+export async function createRule(data: {
+  name: string;
+  rule_type: string;
+  pattern: string;
+  action: {
+    transaction_type?: string;
+    category?: string;
+    subcategory?: string;
+    is_spend?: boolean;
+    is_income?: boolean;
+  };
+  priority?: number;
+  description?: string;
+  is_active?: boolean;
+}) {
+  const response = await fetch(`${API_BASE_URL}/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to create rule: ${errorText}`);
+  }
+  return response.json();
+}
+
+export async function updateRule(id: string, data: {
+  name?: string;
+  pattern?: string;
+  action?: {
+    transaction_type?: string;
+    category?: string;
+    subcategory?: string;
+    is_spend?: boolean;
+    is_income?: boolean;
+  };
+  priority?: number;
+  is_active?: boolean;
+  description?: string;
+}) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to update rule: ${errorText}`);
+  }
+  return response.json();
+}
+
+export async function deleteRule(id: string) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete rule');
+}
+
+export async function toggleRule(id: string) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}/toggle`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to toggle rule');
+  return response.json();
+}
+
+export async function bulkDeleteRules(ids: string[]) {
+  const response = await fetch(`${API_BASE_URL}/rules/bulk-delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(ids),
+  });
+  if (!response.ok) throw new Error('Failed to delete rules');
+  return response.json();
+}
+
+export async function getRuleMatchCount(id: string) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}/match-count`);
+  if (!response.ok) throw new Error('Failed to get match count');
+  return response.json();
+}
+
+export async function applyRuleToTransactions(id: string) {
+  const response = await fetch(`${API_BASE_URL}/rules/${id}/apply`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to apply rule');
   return response.json();
 }

@@ -26,6 +26,7 @@ def list_transactions(
     end_date: Optional[date] = Query(None),
     transaction_type: Optional[TransactionType] = Query(None),
     category: Optional[str] = Query(None),
+    description: Optional[str] = Query(None, description="Search in description/merchant"),
     is_spend: Optional[bool] = Query(None),
     needs_review: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
@@ -40,6 +41,7 @@ def list_transactions(
         end_date: Filter by date <= end_date
         transaction_type: Filter by transaction type
         category: Filter by category
+        description: Search in description_raw or merchant_normalized
         is_spend: Filter by spending flag
         needs_review: Filter by review flag
         page: Page number (1-indexed)
@@ -49,6 +51,8 @@ def list_transactions(
     Returns:
         Paginated list of transactions
     """
+    from sqlalchemy import or_
+
     query = db.query(Transaction)
 
     # Apply filters
@@ -62,6 +66,14 @@ def list_transactions(
         query = query.filter(Transaction.transaction_type == transaction_type)
     if category:
         query = query.filter(Transaction.category == category)
+    if description:
+        search_term = f"%{description}%"
+        query = query.filter(
+            or_(
+                Transaction.description_raw.ilike(search_term),
+                Transaction.merchant_normalized.ilike(search_term)
+            )
+        )
     if is_spend is not None:
         query = query.filter(Transaction.is_spend == is_spend)
     if needs_review is not None:

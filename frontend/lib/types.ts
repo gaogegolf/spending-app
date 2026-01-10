@@ -91,3 +91,58 @@ export interface AccountListResponse {
   accounts: Account[];
   total: number;
 }
+
+// Merchant Category types
+export type MerchantCategorySource = 'USER' | 'AUTO' | 'LLM';
+
+export interface MerchantCategory {
+  id: string;
+  user_id: string;
+  merchant_normalized: string;
+  category: string;
+  confidence: number;
+  source: MerchantCategorySource;
+  times_applied: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MerchantCategoryListResponse {
+  merchant_categories: MerchantCategory[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
+}
+
+// Rule types
+export type RuleType = 'MERCHANT_MATCH' | 'DESCRIPTION_REGEX' | 'AMOUNT_RANGE' | 'CATEGORY_OVERRIDE' | 'COMPOSITE';
+
+export interface RuleAction {
+  transaction_type?: string;
+  category?: string;
+  subcategory?: string;
+  is_spend?: boolean;
+  is_income?: boolean;
+}
+
+export interface Rule {
+  id: string;
+  user_id: string;
+  name: string;
+  rule_type: RuleType;
+  pattern: string;
+  action: RuleAction;
+  priority: number;
+  is_active: boolean;
+  description: string | null;
+  match_count: number;
+  created_at: string;
+  updated_at: string;
+  last_matched_at: string | null;
+}
+
+export interface RuleListResponse {
+  rules: Rule[];
+  total: number;
+}
