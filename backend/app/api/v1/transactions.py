@@ -1,9 +1,13 @@
 """Transactions API endpoints."""
 
+import csv
+import io
 from typing import Optional
 from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
@@ -94,6 +98,109 @@ def list_transactions(
         page=page,
         page_size=page_size,
         has_more=has_more
+    )
+
+
+@router.get("/transactions/export")
+def export_transactions(
+    account_id: Optional[str] = Query(None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
+    transaction_type: Optional[TransactionType] = Query(None),
+    category: Optional[str] = Query(None),
+    format: str = Query("csv", description="Export format: csv"),
+    db: Session = Depends(get_db)
+):
+    """Export transactions as CSV file.
+
+    Supports the same filters as list_transactions.
+
+    Args:
+        account_id: Filter by account ID
+        start_date: Filter by date >= start_date
+        end_date: Filter by date <= end_date
+        transaction_type: Filter by transaction type
+        category: Filter by category
+        format: Export format (currently only CSV supported)
+        db: Database session
+
+    Returns:
+        CSV file download
+    """
+    query = db.query(Transaction)
+
+    # Apply filters
+    if account_id:
+        query = query.filter(Transaction.account_id == account_id)
+    if start_date:
+        query = query.filter(Transaction.date >= start_date)
+    if end_date:
+        query = query.filter(Transaction.date <= end_date)
+    if transaction_type:
+        query = query.filter(Transaction.transaction_type == transaction_type)
+    if category:
+        query = query.filter(Transaction.category == category)
+
+    # Get all matching transactions
+    transactions = query.order_by(Transaction.date.desc()).all()
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow([
+        'Date',
+        'Description',
+        'Merchant',
+        'Amount',
+        'Type',
+        'Category',
+        'Subcategory',
+        'Is Spend',
+        'Is Income',
+        'Classification Method',
+        'Account ID',
+        'Tags',
+        'Notes'
+    ])
+
+    # Write data rows
+    for txn in transactions:
+        writer.writerow([
+            txn.date.isoformat() if txn.date else '',
+            txn.description_raw or '',
+            txn.merchant_normalized or '',
+            str(txn.amount) if txn.amount else '0',
+            txn.transaction_type.value if txn.transaction_type else '',
+            txn.category or '',
+            txn.subcategory or '',
+            'Yes' if txn.is_spend else 'No',
+            'Yes' if txn.is_income else 'No',
+            txn.classification_method.value if txn.classification_method else '',
+            txn.account_id or '',
+            ','.join(txn.tags) if txn.tags else '',
+            txn.user_note or ''
+        ])
+
+    # Reset stream position
+    output.seek(0)
+
+    # Generate filename with date range
+    filename = "transactions"
+    if start_date:
+        filename += f"_from_{start_date.isoformat()}"
+    if end_date:
+        filename += f"_to_{end_date.isoformat()}"
+    filename += ".csv"
+
+    # Return as streaming response
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}"
+        }
     )
 
 

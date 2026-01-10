@@ -377,3 +377,47 @@ export async function applyRuleToTransactions(id: string) {
   if (!response.ok) throw new Error('Failed to apply rule');
   return response.json();
 }
+
+// Export API
+export async function exportTransactions(params?: {
+  account_id?: string;
+  start_date?: string;
+  end_date?: string;
+  transaction_type?: string;
+  category?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        queryParams.append(key, String(value));
+      }
+    });
+  }
+
+  const url = `${API_BASE_URL}/transactions/export${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+
+  if (!response.ok) throw new Error('Failed to export transactions');
+
+  // Get the filename from Content-Disposition header or use default
+  const contentDisposition = response.headers.get('Content-Disposition');
+  let filename = 'transactions.csv';
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename=(.+)/);
+    if (filenameMatch) {
+      filename = filenameMatch[1];
+    }
+  }
+
+  // Get blob and trigger download
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(downloadUrl);
+}

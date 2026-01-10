@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction } from '@/lib/api';
+import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 
@@ -16,6 +16,7 @@ export default function TransactionsPage() {
   const [deleting, setDeleting] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [reclassifySuccess, setReclassifySuccess] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   // Category editing state
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
@@ -216,6 +217,25 @@ export default function TransactionsPage() {
     }
   }
 
+  async function handleExport() {
+    try {
+      setExporting(true);
+      setError(null);
+
+      await exportTransactions({
+        account_id: accountFilter || undefined,
+        transaction_type: typeFilter || undefined,
+        category: categoryFilter || undefined,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to export transactions');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function handleCategoryChange(transactionId: string, newCategory: string) {
     try {
       setSavingCategory(true);
@@ -352,23 +372,42 @@ export default function TransactionsPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-gray-900">Transactions</h1>
-        <button
-          onClick={handleReclassifyAll}
-          disabled={reclassifying}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
-        >
-          {reclassifying ? (
-            <>
-              <span className="animate-spin">⟳</span>
-              Re-classifying...
-            </>
-          ) : (
-            <>
-              <span>🔄</span>
-              Re-classify All
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+          >
+            {exporting ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                Exporting...
+              </>
+            ) : (
+              <>
+                <span>📥</span>
+                Export CSV
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleReclassifyAll}
+            disabled={reclassifying}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+          >
+            {reclassifying ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                Re-classifying...
+              </>
+            ) : (
+              <>
+                <span>🔄</span>
+                Re-classify All
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Success Message */}

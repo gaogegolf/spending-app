@@ -1,16 +1,21 @@
-"""PDF file parser with support for Fidelity two-table format."""
+"""PDF file parser with support for Fidelity and American Express formats."""
 
 import pdfplumber
 import pandas as pd
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
 from app.services.file_parser.base import BaseParser, ParseResult
 
 
 class PDFParser(BaseParser):
-    """Parser for PDF statement files."""
+    """Parser for PDF statement files.
+
+    Supports:
+    - Fidelity Visa statements (two-table format)
+    - American Express statements (text-based format)
+    """
 
     def __init__(self, file_path: str):
         """Initialize PDF parser.
@@ -22,6 +27,7 @@ class PDFParser(BaseParser):
         self.pdf = None
         self.tables = []
         self.statement_year = None  # Extract from PDF header
+        self.statement_format = None  # 'fidelity', 'amex', or 'unknown'
 
     def parse(self) -> ParseResult:
         """Parse PDF file and return transactions."""
@@ -32,9 +38,17 @@ class PDFParser(BaseParser):
         try:
             self.pdf = pdfplumber.open(self.file_path)
 
+            # Detect statement format
+            self.statement_format = self._detect_statement_format()
+
             # Extract statement year from PDF header
             self.statement_year = self._extract_statement_year()
 
+            # Route to appropriate parser based on format
+            if self.statement_format == 'amex':
+                return self._parse_amex_statement()
+
+            # Default: Try Fidelity format
             # Extract all tables from all pages
             self.tables = self.extract_tables()
 
@@ -137,12 +151,267 @@ class PDFParser(BaseParser):
             if self.pdf:
                 self.pdf.close()
 
+    def _detect_statement_format(self) -> str:
+        """Detect the statement format based on PDF content.
+
+        Returns:
+            'amex' for American Express, 'fidelity' for Fidelity, 'unknown' otherwise
+        """
+        try:
+            if not self.pdf or len(self.pdf.pages) == 0:
+                return 'unknown'
+
+            # Get first page text
+            first_page_text = self.pdf.pages[0].extract_text()
+
+            if not first_page_text:
+                return 'unknown'
+
+            # Check for American Express indicators
+            amex_indicators = [
+                'American Express',
+                'Platinum Card®',
+                'Gold Card®',
+                'americanexpress.com',
+                'Membership Rewards',
+                'Pay Over Time',
+            ]
+
+            if any(indicator in first_page_text for indicator in amex_indicators):
+                return 'amex'
+
+            # Check for Fidelity indicators
+            fidelity_indicators = [
+                'Fidelity',
+                'Payments and Other Credits',
+                'Purchases and Other Debits',
+            ]
+
+            if any(indicator in first_page_text for indicator in fidelity_indicators):
+                return 'fidelity'
+
+            return 'unknown'
+
+        except Exception:
+            return 'unknown'
+
+    def _parse_amex_statement(self) -> ParseResult:
+        """Parse American Express statement.
+
+        Amex statements have text-based transaction format:
+        - Payments section: payments with -$AMOUNT
+        - Credits section: credits/refunds with -$AMOUNT
+        - New Charges section: charges with $AMOUNT
+        - Fees section: fees with $AMOUNT
+
+        Returns:
+            ParseResult with transactions
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Parse transactions from text
+            transactions = self._extract_amex_transactions(all_text)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in American Express statement"],
+                    warnings=warnings,
+                    metadata={'format': 'amex'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'amex',
+                }
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Amex statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'amex'}
+            )
+
+    def _extract_amex_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from American Express statement text.
+
+        Args:
+            text: Full text of the Amex statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        current_section = None
+
+        # Patterns for Amex transactions
+        # Credit pattern: MM/DD/YY DESCRIPTION -$AMOUNT
+        credit_pattern = r'^(\d{2}/\d{2}/\d{2})\*?\s+(.+?)\s+-\$?([\d,]+\.\d{2})⧫?$'
+        # Charge pattern: MM/DD/YY DESCRIPTION $AMOUNT
+        charge_pattern = r'^(\d{2}/\d{2}/\d{2})\*?\s+(.+?)\s+\$?([\d,]+\.\d{2})⧫?$'
+
+        for line in lines:
+            line = line.strip()
+
+            # Detect section headers
+            if 'Payments and Credits' in line or 'Detail' in line and 'Payments' in line:
+                current_section = 'payments_credits'
+            elif 'New Charges' in line and 'Total' not in line and 'Summary' not in line:
+                current_section = 'charges'
+            elif line.startswith('Fees') and 'Total' not in line:
+                current_section = 'fees'
+            elif 'Credits' in line and 'Payment' not in line and 'Total' not in line:
+                current_section = 'credits'
+            elif 'Payments' in line and 'Credits' not in line and 'Total' not in line:
+                current_section = 'payments'
+
+            # Skip non-transaction lines
+            if not line or 'Account Ending' in line or 'Closing Date' in line or \
+               'Customer Care' in line or 'Page' in line or 'Summary' in line or \
+               'Total' in line or line.startswith('Card Ending'):
+                continue
+
+            # Try to match credit (negative amount) pattern first
+            credit_match = re.match(credit_pattern, line)
+            if credit_match:
+                txn = self._parse_amex_transaction_line(
+                    credit_match.group(1),
+                    credit_match.group(2),
+                    credit_match.group(3),
+                    is_credit=True,
+                    section=current_section
+                )
+                if txn:
+                    transactions.append(txn)
+                continue
+
+            # Try to match charge (positive amount) pattern
+            charge_match = re.match(charge_pattern, line)
+            if charge_match:
+                txn = self._parse_amex_transaction_line(
+                    charge_match.group(1),
+                    charge_match.group(2),
+                    charge_match.group(3),
+                    is_credit=False,
+                    section=current_section
+                )
+                if txn:
+                    transactions.append(txn)
+
+        return transactions
+
+    def _parse_amex_transaction_line(self, date_str: str, description: str,
+                                      amount_str: str, is_credit: bool,
+                                      section: str) -> Optional[Dict[str, Any]]:
+        """Parse a single Amex transaction line.
+
+        Args:
+            date_str: Date string in MM/DD/YY format
+            description: Transaction description
+            amount_str: Amount string (without $ or -)
+            is_credit: Whether this is a credit (negative) transaction
+            section: Current section of the statement
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Parse date (MM/DD/YY format)
+            month, day, year = date_str.split('/')
+            year_full = 2000 + int(year)
+            parsed_date = datetime(year_full, int(month), int(day)).date()
+
+            # Clean amount
+            amount = float(amount_str.replace(',', ''))
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_amex_merchant(description)
+
+            # Determine if this is a payment (should be excluded or marked as transfer)
+            is_payment = 'AUTOPAY' in description.upper() or \
+                         'PAYMENT' in description.upper() and 'THANK YOU' in description.upper()
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': amount,
+                'is_credit': is_credit or is_payment,
+                'currency': 'USD',
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Amex line: {date_str} {description} {amount_str}, error: {e}")
+            return None
+
+    def _clean_amex_merchant(self, description: str) -> str:
+        """Clean American Express merchant description.
+
+        Amex format examples:
+        - "UBER EATS help.uber.com CA"
+        - "ELITE PARKING SERVICES 569900000228528 HONOLULU HI"
+        - "MCDONALD'S HONOLULU HI"
+
+        Args:
+            description: Raw transaction description
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Remove URLs
+        cleaned = re.sub(r'https?://\S+', '', cleaned)
+        cleaned = re.sub(r'\S+\.com\S*', '', cleaned)
+        cleaned = re.sub(r'\S+\.net\S*', '', cleaned)
+
+        # Remove long numeric codes (like 569900000228528)
+        cleaned = re.sub(r'\b\d{10,}\b', '', cleaned)
+
+        # Remove phone numbers
+        cleaned = re.sub(r'\b\d{3}[-\s]?\d{3}[-\s]?\d{4}\b', '', cleaned)
+        cleaned = re.sub(r'\b\d{10}\b', '', cleaned)
+
+        # Remove state codes at the end (2-letter codes preceded by city)
+        cleaned = re.sub(r'\s+[A-Z]{2}\s*$', '', cleaned)
+
+        # Remove city names at the end (common patterns)
+        cleaned = re.sub(r'\s+(HONOLULU|KAILUA|LAIE|WAIMANALO|HALEIWA|WAIPAHU|NAPA|BENTONVILLE)\s*$',
+                        '', cleaned, flags=re.IGNORECASE)
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        return cleaned.strip()
+
     def _extract_statement_year(self) -> int:
         """Extract statement year from PDF header.
 
-        Fidelity statements have formats like:
-        - "November2025 Statement"
-        - "Closing Date:11/24/2025"
+        Supports both Fidelity and Amex formats:
+        - Fidelity: "November2025 Statement", "Closing Date:11/24/2025"
+        - Amex: "Closing Date01/22/25"
 
         Returns:
             Statement year (e.g., 2025), defaults to current year if not found
@@ -157,10 +426,16 @@ class PDFParser(BaseParser):
             if not first_page_text:
                 return datetime.now().year
 
-            # Look for "Closing Date: MM/DD/YYYY" pattern (most reliable)
+            # Look for "Closing Date: MM/DD/YYYY" pattern (Fidelity format)
             closing_date_match = re.search(r'Closing Date:\s*(\d{2})/(\d{2})/(\d{4})', first_page_text)
             if closing_date_match:
                 return int(closing_date_match.group(3))
+
+            # Look for "Closing DateMM/DD/YY" pattern (Amex format - no colon, 2-digit year)
+            amex_date_match = re.search(r'Closing Date\s*(\d{2})/(\d{2})/(\d{2})', first_page_text)
+            if amex_date_match:
+                year_2digit = int(amex_date_match.group(3))
+                return 2000 + year_2digit
 
             # Look for "MonthYYYY Statement" pattern (e.g., "November2025 Statement")
             month_year_match = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d{4})\s+Statement', first_page_text)
