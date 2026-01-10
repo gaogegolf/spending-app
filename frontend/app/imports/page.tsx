@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAccounts, uploadFile, parseImport, commitImport, getImportStatus } from '@/lib/api';
-import { Account, ImportRecord } from '@/lib/types';
+import { getAccounts, uploadFile, parseImport, commitImport, getImportStatus, createAccount } from '@/lib/api';
+import { Account, ImportRecord, AccountType } from '@/lib/types';
+
+const ACCOUNT_TYPES: AccountType[] = ['CREDIT_CARD', 'CHECKING', 'SAVINGS', 'INVESTMENT', 'OTHER'];
 
 export default function ImportsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -14,6 +16,14 @@ export default function ImportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<'select' | 'upload' | 'processing' | 'complete'>('select');
 
+  // New account modal state
+  const [showNewAccountModal, setShowNewAccountModal] = useState(false);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newAccountType, setNewAccountType] = useState<AccountType>('CREDIT_CARD');
+  const [newAccountInstitution, setNewAccountInstitution] = useState('');
+  const [newAccountLast4, setNewAccountLast4] = useState('');
+  const [creatingAccount, setCreatingAccount] = useState(false);
+
   useEffect(() => {
     loadAccounts();
   }, []);
@@ -24,6 +34,50 @@ export default function ImportsPage() {
       setAccounts(data.accounts || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load accounts');
+    }
+  }
+
+  async function handleCreateAccount(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!newAccountName.trim()) {
+      setError('Account name is required');
+      return;
+    }
+
+    try {
+      setCreatingAccount(true);
+      setError(null);
+
+      const newAccount = await createAccount({
+        name: newAccountName.trim(),
+        account_type: newAccountType,
+        institution: newAccountInstitution.trim() || undefined,
+        account_number_last4: newAccountLast4.trim() || undefined,
+      });
+
+      // Add to accounts list and select it
+      setAccounts([...accounts, newAccount]);
+      setSelectedAccount(newAccount.id);
+
+      // Reset modal state
+      setShowNewAccountModal(false);
+      setNewAccountName('');
+      setNewAccountType('CREDIT_CARD');
+      setNewAccountInstitution('');
+      setNewAccountLast4('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create account');
+    } finally {
+      setCreatingAccount(false);
+    }
+  }
+
+  function handleAccountChange(value: string) {
+    if (value === '__new__') {
+      setShowNewAccountModal(true);
+    } else {
+      setSelectedAccount(value);
     }
   }
 
@@ -144,7 +198,7 @@ export default function ImportsPage() {
               <select
                 id="account"
                 value={selectedAccount}
-                onChange={(e) => setSelectedAccount(e.target.value)}
+                onChange={(e) => handleAccountChange(e.target.value)}
                 className="block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base transition-all"
                 required
               >
@@ -154,6 +208,9 @@ export default function ImportsPage() {
                     {account.name} ({account.account_type})
                   </option>
                 ))}
+                <option value="__new__" className="font-semibold text-indigo-600">
+                  + Create New Account
+                </option>
               </select>
             </div>
 
@@ -329,6 +386,110 @@ export default function ImportsPage() {
             >
               View Transactions
             </a>
+          </div>
+        </div>
+      )}
+
+      {/* New Account Modal */}
+      {showNewAccountModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-gray-900">Create New Account</h2>
+              <button
+                onClick={() => setShowNewAccountModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateAccount}>
+              {/* Account Name */}
+              <div className="mb-4">
+                <label htmlFor="new-account-name" className="block text-sm font-medium text-gray-700 mb-1">
+                  Account Name *
+                </label>
+                <input
+                  type="text"
+                  id="new-account-name"
+                  value={newAccountName}
+                  onChange={(e) => setNewAccountName(e.target.value)}
+                  placeholder="e.g., Amex Platinum Card"
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  required
+                />
+              </div>
+
+              {/* Account Type */}
+              <div className="mb-4">
+                <label htmlFor="new-account-type" className="block text-sm font-medium text-gray-700 mb-1">
+                  Account Type *
+                </label>
+                <select
+                  id="new-account-type"
+                  value={newAccountType}
+                  onChange={(e) => setNewAccountType(e.target.value as AccountType)}
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  required
+                >
+                  {ACCOUNT_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type.replace('_', ' ')}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Institution */}
+              <div className="mb-4">
+                <label htmlFor="new-account-institution" className="block text-sm font-medium text-gray-700 mb-1">
+                  Institution
+                </label>
+                <input
+                  type="text"
+                  id="new-account-institution"
+                  value={newAccountInstitution}
+                  onChange={(e) => setNewAccountInstitution(e.target.value)}
+                  placeholder="e.g., American Express"
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Last 4 Digits */}
+              <div className="mb-6">
+                <label htmlFor="new-account-last4" className="block text-sm font-medium text-gray-700 mb-1">
+                  Last 4 Digits
+                </label>
+                <input
+                  type="text"
+                  id="new-account-last4"
+                  value={newAccountLast4}
+                  onChange={(e) => setNewAccountLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="e.g., 1007"
+                  maxLength={4}
+                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowNewAccountModal(false)}
+                  className="flex-1 py-2 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingAccount || !newAccountName.trim()}
+                  className="flex-1 py-2 px-4 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {creatingAccount ? 'Creating...' : 'Create Account'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
