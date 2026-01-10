@@ -37,12 +37,11 @@ export default function TransactionsPage() {
   const [typeFilter, setTypeFilter] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
   const [descriptionFilter, setDescriptionFilter] = useState<string>('');
-  const [needsReviewFilter, setNeedsReviewFilter] = useState<boolean | undefined>(undefined);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
   // Sorting state
-  type SortColumn = 'date' | 'description' | 'category' | 'type' | 'amount' | 'review';
+  type SortColumn = 'date' | 'description' | 'category' | 'type' | 'amount';
   const [sortColumn, setSortColumn] = useState<SortColumn>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
@@ -52,7 +51,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     loadTransactions();
-  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, descriptionFilter, needsReviewFilter, startDate, endDate]);
+  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, descriptionFilter, startDate, endDate]);
 
   // Lock body scroll when modal is open (only for single delete)
   useEffect(() => {
@@ -85,7 +84,6 @@ export default function TransactionsPage() {
         transaction_type: typeFilter || undefined,
         category: categoryFilter || undefined,
         description: descriptionFilter || undefined,
-        needs_review: needsReviewFilter,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
         page,
@@ -106,7 +104,6 @@ export default function TransactionsPage() {
     setTypeFilter('');
     setCategoryFilter('');
     setDescriptionFilter('');
-    setNeedsReviewFilter(undefined);
     setStartDate('');
     setEndDate('');
     setPage(1);
@@ -360,9 +357,6 @@ export default function TransactionsPage() {
       case 'amount':
         comparison = parseFloat(a.amount) - parseFloat(b.amount);
         break;
-      case 'review':
-        comparison = (a.needs_review ? 1 : 0) - (b.needs_review ? 1 : 0);
-        break;
     }
 
     return sortDirection === 'asc' ? comparison : -comparison;
@@ -572,26 +566,6 @@ export default function TransactionsPage() {
             />
           </div>
 
-          {/* Needs Review Filter */}
-          <div>
-            <label htmlFor="review-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Review Status
-            </label>
-            <select
-              id="review-filter"
-              value={needsReviewFilter === undefined ? '' : String(needsReviewFilter)}
-              onChange={(e) => {
-                const value = e.target.value;
-                setNeedsReviewFilter(value === '' ? undefined : value === 'true');
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All</option>
-              <option value="true">Needs Review</option>
-              <option value="false">Reviewed</option>
-            </select>
-          </div>
         </div>
 
         <div className="mt-4 flex items-center justify-between">
@@ -815,14 +789,6 @@ export default function TransactionsPage() {
                       Amount{getSortIcon('amount')}
                     </div>
                   </th>
-                  <th
-                    className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
-                    onClick={() => handleSort('review')}
-                  >
-                    <div className="flex items-center justify-center">
-                      Review{getSortIcon('review')}
-                    </div>
-                  </th>
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
@@ -909,13 +875,6 @@ export default function TransactionsPage() {
                       <span className={transaction.is_spend ? 'text-red-600' : transaction.is_income ? 'text-green-600' : 'text-gray-900'}>
                         ${parseFloat(transaction.amount).toFixed(2)}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      {transaction.needs_review && (
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                          Review
-                        </span>
-                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
                       <button
