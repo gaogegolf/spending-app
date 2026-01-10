@@ -26,7 +26,7 @@ class StatsService:
         """Calculate monthly spending/income summary.
 
         CRITICAL: Only counts transactions where is_spend=true for spending totals.
-        This ensures PAYMENT/TRANSFER transactions are excluded.
+        This ensures TRANSFER and UNCATEGORIZED transactions are excluded.
 
         Args:
             year: Year
@@ -59,7 +59,7 @@ class StatsService:
             Account.user_id == user_id,
             Transaction.date >= start_date,
             Transaction.date < end_date,
-            Transaction.is_spend == True  # CRITICAL: Excludes PAYMENT/TRANSFER
+            Transaction.is_spend == True  # CRITICAL: Excludes TRANSFER/UNCATEGORIZED
         )
         if account_id:
             total_spend = total_spend.filter(Transaction.account_id == account_id)

@@ -121,11 +121,11 @@ class LLMClassifier:
                                   transactions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate LLM classifications against business rules.
 
-        CRITICAL: This enforces the business rules that:
-        - PAYMENT/TRANSFER must have is_spend=false
-        - INCOME must have is_income=true, is_spend=false
-        - REFUND must have is_spend=false
-        - FEE_INTEREST must have is_spend=true
+        CRITICAL: This enforces the business rules for 4 transaction types:
+        - EXPENSE → is_spend=true, is_income=false
+        - INCOME → is_spend=false, is_income=true
+        - TRANSFER → is_spend=false, is_income=false
+        - UNCATEGORIZED → is_spend=false, is_income=false
 
         Args:
             classifications: Raw classifications from LLM
@@ -135,6 +135,7 @@ class LLMClassifier:
             Validated and corrected classifications
         """
         validated = []
+        valid_types = {'EXPENSE', 'INCOME', 'TRANSFER', 'UNCATEGORIZED'}
 
         for i, classification in enumerate(classifications):
             # Get original transaction for reference
@@ -143,38 +144,45 @@ class LLMClassifier:
             # Ensure all required fields exist
             txn_type = classification.get('transaction_type', 'EXPENSE')
 
+            # Map old types to new types if LLM returns them
+            type_mapping = {
+                'PAYMENT': 'TRANSFER',
+                'REFUND': 'INCOME',
+                'FEE_INTEREST': 'EXPENSE',
+            }
+            if txn_type in type_mapping:
+                txn_type = type_mapping[txn_type]
+                classification['transaction_type'] = txn_type
+
+            # Default to UNCATEGORIZED if type is invalid
+            if txn_type not in valid_types:
+                txn_type = 'UNCATEGORIZED'
+                classification['transaction_type'] = txn_type
+
             # CRITICAL BUSINESS RULE ENFORCEMENT
-            if txn_type in ['PAYMENT', 'TRANSFER']:
-                classification['is_spend'] = False
+            if txn_type == 'EXPENSE':
+                classification['is_spend'] = True
                 classification['is_income'] = False
 
             elif txn_type == 'INCOME':
                 classification['is_income'] = True
                 classification['is_spend'] = False
 
-            elif txn_type == 'REFUND':
+            elif txn_type == 'TRANSFER':
                 classification['is_spend'] = False
                 classification['is_income'] = False
 
-            elif txn_type == 'FEE_INTEREST':
-                classification['is_spend'] = True
+            elif txn_type == 'UNCATEGORIZED':
+                classification['is_spend'] = False
                 classification['is_income'] = False
-
-            elif txn_type == 'EXPENSE':
-                classification['is_spend'] = True
-                classification['is_income'] = False
+                classification['category'] = 'Uncategorized'
 
             # Ensure confidence is in valid range
             confidence = classification.get('confidence', 0.8)
             classification['confidence'] = max(0.0, min(1.0, confidence))
 
-            # Set needs_review flag for low confidence
-            classification['needs_review'] = confidence < 0.6
-
-            # Ensure category is null for non-expense types
-            if txn_type not in ['EXPENSE', 'FEE_INTEREST']:
-                classification['category'] = None
-                classification['subcategory'] = None
+            # Set needs_review flag for low confidence or uncategorized
+            classification['needs_review'] = confidence < 0.6 or txn_type == 'UNCATEGORIZED'
 
             # Remove fields that are not part of the Transaction model
             # (e.g., 'reasoning', 'original_index')
@@ -197,6 +205,8 @@ class LLMClassifier:
     def _default_classification(self, transaction: Dict[str, Any]) -> Dict[str, Any]:
         """Create a default classification for a transaction when LLM fails.
 
+        Uses 4 transaction types: EXPENSE, INCOME, TRANSFER, UNCATEGORIZED
+
         Args:
             transaction: Transaction dict
 
@@ -207,27 +217,27 @@ class LLMClassifier:
 
         # Try to detect type from keywords
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
-            txn_type = 'PAYMENT'
+            txn_type = 'TRANSFER'
             is_spend = False
             is_income = False
-            category = None
+            category = 'Credit Card Payments'
         elif any(keyword in description for keyword in ['PAYROLL', 'SALARY', 'DIRECT DEP']):
             txn_type = 'INCOME'
             is_spend = False
             is_income = True
-            category = None
+            category = 'Paychecks/Salary'
         elif any(keyword in description for keyword in ['TRANSFER', 'ZELLE', 'VENMO', 'CASHOUT']):
             txn_type = 'TRANSFER'
             is_spend = False
             is_income = False
-            category = None
+            category = 'Transfers'
         elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
-            txn_type = 'REFUND'
+            txn_type = 'INCOME'
             is_spend = False
-            is_income = False
-            category = None
+            is_income = True
+            category = 'Refunds & Reimbursements'
         elif any(keyword in description for keyword in ['LATE FEE', 'ANNUAL FEE', 'OVERDRAFT', 'INTEREST CHARGE']):
-            txn_type = 'FEE_INTEREST'
+            txn_type = 'EXPENSE'
             is_spend = True
             is_income = False
             category = 'Service Charges/Fees'

@@ -15,9 +15,7 @@ class TransactionType(str, enum.Enum):
     EXPENSE = "EXPENSE"  # Regular purchases - counts as spending
     INCOME = "INCOME"  # Salary, wages, bonuses - counts as income
     TRANSFER = "TRANSFER"  # Moving money between accounts - NOT spending or income
-    PAYMENT = "PAYMENT"  # Credit card/loan payments - NOT spending
-    REFUND = "REFUND"  # Returns, cashback - offsets spending
-    FEE_INTEREST = "FEE_INTEREST"  # Fees, interest charges - counts as spending
+    UNCATEGORIZED = "UNCATEGORIZED"  # Transactions not yet categorized
 
 
 class ClassificationMethod(str, enum.Enum):
@@ -91,15 +89,16 @@ class Transaction(Base):
         """Set is_spend flag based on transaction_type.
 
         CRITICAL: This enforces the business rule that:
-        - EXPENSE and FEE_INTEREST count as spending
-        - PAYMENT, TRANSFER, INCOME, REFUND do NOT count as spending
+        - EXPENSE counts as spending
+        - INCOME counts as income
+        - TRANSFER and UNCATEGORIZED do NOT count as spending or income
         """
-        if self.transaction_type in [TransactionType.EXPENSE, TransactionType.FEE_INTEREST]:
+        if self.transaction_type == TransactionType.EXPENSE:
             self.is_spend = True
             self.is_income = False
         elif self.transaction_type == TransactionType.INCOME:
             self.is_income = True
             self.is_spend = False
-        else:  # PAYMENT, TRANSFER, REFUND
+        else:  # TRANSFER, UNCATEGORIZED
             self.is_spend = False
             self.is_income = False

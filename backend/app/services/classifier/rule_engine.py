@@ -226,7 +226,7 @@ class RuleEngine:
         if 'transaction_type' in action:
             txn_type = action['transaction_type']
             if action.get('is_spend') is None:
-                transaction.is_spend = txn_type in ['EXPENSE', 'FEE_INTEREST']
+                transaction.is_spend = txn_type == 'EXPENSE'
             if action.get('is_income') is None:
                 transaction.is_income = txn_type == 'INCOME'
 
@@ -374,7 +374,7 @@ class RuleEngine:
         if 'transaction_type' in action:
             txn_type = action['transaction_type']
             if action.get('is_spend') is None:
-                result['is_spend'] = txn_type in ['EXPENSE', 'FEE_INTEREST']
+                result['is_spend'] = txn_type == 'EXPENSE'
             if action.get('is_income') is None:
                 result['is_income'] = txn_type == 'INCOME'
 

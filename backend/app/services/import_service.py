@@ -441,38 +441,42 @@ class ImportService:
 
         # Priority 2: Determine transaction type from keywords
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
-            txn_type = 'PAYMENT'
+            txn_type = 'TRANSFER'
             is_spend = False
             is_income = False
-            category = None
+            category = 'Credit Card Payments'
         elif any(keyword in description for keyword in ['SALARY', 'PAYROLL', 'DEPOSIT', 'DIRECT DEP']):
             txn_type = 'INCOME'
             is_spend = False
             is_income = True
-            category = None
+            category = 'Paychecks/Salary'
         elif any(keyword in description for keyword in ['TRANSFER', 'ZELLE', 'VENMO', 'CASHOUT']):
             txn_type = 'TRANSFER'
             is_spend = False
             is_income = False
-            category = None
+            category = 'Transfers'
         elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
-            txn_type = 'REFUND'
+            txn_type = 'INCOME'
             is_spend = False
-            is_income = False
-            category = None
+            is_income = True
+            category = 'Refunds & Reimbursements'
         elif any(keyword in description for keyword in ['LATE FEE', 'ANNUAL FEE', 'OVERDRAFT', 'INTEREST CHARGE']):
-            txn_type = 'FEE_INTEREST'
+            txn_type = 'EXPENSE'
             is_spend = True
             is_income = False
             category = 'Service Charges/Fees'
         else:
-            # Default to EXPENSE and categorize
-            txn_type = 'EXPENSE'
-            is_spend = True
+            # Default to UNCATEGORIZED
+            txn_type = 'UNCATEGORIZED'
+            is_spend = False
             is_income = False
 
-            # Priority 3: Smart category matching based on merchant patterns
+            # Try to categorize by merchant patterns
             category = self._categorize_by_merchant(description)
+            if category:
+                # If we found a category, it's likely an expense
+                txn_type = 'EXPENSE'
+                is_spend = True
 
         return {
             **txn_data,

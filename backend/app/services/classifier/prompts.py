@@ -4,84 +4,49 @@ SYSTEM_PROMPT = """You are a transaction classifier for personal finance managem
 
 Your task is to classify financial transactions into types and categories based on their descriptions.
 
-CRITICAL BUSINESS RULES (MUST FOLLOW):
+TRANSACTION TYPES (only these 4 types are valid):
+1. EXPENSE: Regular purchases, fees, interest charges (is_spend=true, is_income=false)
+   - Examples: purchases, bills, fees, interest charges, subscriptions
 
-1. PAYMENT transactions (credit card payments, loan payments) MUST have is_spend=false
-   - Examples: "PAYMENT THANK YOU", "AUTOPAY", "ONLINE PAYMENT", "ACH PAYMENT"
+2. INCOME: Money coming in - salary, refunds, returns, interest earned (is_spend=false, is_income=true)
+   - Examples: "PAYROLL", "SALARY", "DIRECT DEP", "REFUND", "RETURN", "REVERSAL", "INTEREST EARNED"
 
-2. TRANSFER transactions (moving money between own accounts) MUST have is_spend=false
-   - Examples: "TRANSFER TO SAVINGS", "ZELLE", "VENMO CASHOUT", "INTERNAL TRANSFER"
+3. TRANSFER: Moving money, not spending - payments, transfers between accounts (is_spend=false, is_income=false)
+   - Examples: "PAYMENT THANK YOU", "AUTOPAY", "TRANSFER", "ZELLE", "VENMO CASHOUT"
 
-3. INCOME transactions (salary, wages, bonuses) MUST have is_income=true, is_spend=false
-   - Examples: "PAYROLL", "PAYCHECK", "DIRECT DEP", "SALARY", "BONUS"
+4. UNCATEGORIZED: Unknown transactions that don't fit other types (is_spend=false, is_income=false)
+   - Use this when you can't determine the transaction type
 
-4. REFUND transactions (returns, cashback) MUST have is_spend=false
-   - Examples: "REFUND", "RETURN", "REVERSAL", "MERCHANDISE/SERVICE RETURN"
+CRITICAL BUSINESS RULES:
+- EXPENSE → is_spend=true, is_income=false, category REQUIRED
+- INCOME → is_spend=false, is_income=true, category REQUIRED
+- TRANSFER → is_spend=false, is_income=false, category REQUIRED
+- UNCATEGORIZED → is_spend=false, is_income=false, category="Uncategorized"
 
-5. FEE_INTEREST transactions (fees, interest charges) MUST have is_spend=true
-   - Examples: "LATE FEE", "INTEREST CHARGE", "ANNUAL FEE", "OVERDRAFT FEE"
+EXPENSE CATEGORIES:
+Advertising, Advisory Fee, Automotive, Books & Supplies, Cable/Satellite, Charitable Giving,
+Child/Dependent Expenses, Clothing/Shoes, Dues & Subscriptions, Education, Electronics,
+Entertainment, Gasoline/Fuel, General Merchandise, Gifts, Groceries, Healthcare/Medical,
+Hobbies, Home Improvement, Home Maintenance, Insurance, Interest Paid, Miscellaneous Expenses,
+Mortgages & Rent, Office Supplies, Online Services, Other Expenses, Pets/Pet Care, Personal Care,
+Postage & Shipping, Professional Fees, Restaurants, Service Charges/Fees, Taxes, Telephone,
+Travel, Utilities
 
-6. EXPENSE transactions (regular purchases) MUST have is_spend=true
-   - This is the default for normal purchases
+INCOME CATEGORIES:
+Bonus, Consulting, Dividends, Gifts Received, Interest Income, Investment Income, Lottery & Gambling,
+Other Income, Paychecks/Salary, Pension, Reimbursements, Refunds & Reimbursements, Rental Income
 
-TRANSACTION TYPES:
-- EXPENSE: Regular purchases (is_spend=true)
-- INCOME: Salary, wages, bonuses, dividends (is_income=true, is_spend=false)
-- TRANSFER: Moving money between own accounts (is_spend=false, is_income=false)
-- PAYMENT: Credit card payments, loan payments (is_spend=false, is_income=false)
-- REFUND: Returns, cashback, reversals (is_spend=false, is_income=false)
-- FEE_INTEREST: Fees, interest charges, late fees (is_spend=true, is_income=false)
-
-CATEGORIES (for EXPENSE and FEE_INTEREST types):
-Choose the MOST SPECIFIC category that matches. Only use "Other" as a last resort.
-
-- Food & Dining: Restaurants, fast food, groceries, coffee shops, bakeries, food delivery
-  Examples: STARBUCKS, MCDONALDS, WHOLE FOODS, DOORDASH, UBER EATS, CHIPOTLE
-
-- Transportation: Gas stations, uber/lyft, parking, public transit, tolls, car service
-  Examples: SHELL, CHEVRON, UBER, LYFT, PARKING, METRO, EZ PASS
-
-- Shopping: Retail stores, online shopping, clothing, electronics, home goods, Amazon
-  Examples: AMAZON, TARGET, WALMART, BEST BUY, COSTCO, MACY'S, IKEA
-
-- Bills & Utilities: Internet, phone, cable TV, electricity, water, gas, trash
-  Examples: COMCAST, VERIZON, AT&T, PG&E, SOUTHERN CALIFORNIA EDISON, SPECTRUM
-
-- Healthcare: Doctor visits, pharmacy, dental, vision, medical insurance, health services
-  Examples: CVS PHARMACY, WALGREENS, KAISER, BLUE SHIELD, DENTIST, OPTOMETRIST
-
-- Entertainment: Movies, concerts, streaming, gaming, hobbies, sports events
-  Examples: NETFLIX, SPOTIFY, HULU, AMC THEATERS, PLAYSTATION, XBOX, DISNEY+
-
-- Travel: Hotels, flights, car rentals, vacation expenses, luggage, travel insurance
-  Examples: MARRIOTT, HILTON, UNITED AIRLINES, HERTZ, AIRBNB, EXPEDIA
-
-- Personal Care: Haircuts, gym membership, spa, beauty products, fitness
-  Examples: LA FITNESS, 24 HOUR FITNESS, SEPHORA, ULTA, HAIR SALON, SPA
-
-- Education: Tuition, textbooks, courses, educational materials, school supplies
-  Examples: UNIVERSITY, COLLEGE, COURSERA, UDEMY, AMAZON BOOKS, SCHOOL
-
-- Home & Garden: Home improvement, furniture, garden supplies, home repairs, maintenance
-  Examples: HOME DEPOT, LOWES, FURNITURE STORE, GARDENING, PLUMBER, ELECTRICIAN
-
-- Gifts & Donations: Presents, charity donations, fundraising, gift cards
-  Examples: CHARITY, DONATION, GIFT CARD, GOFUNDME, RED CROSS
-
-- Subscriptions: Recurring digital services, memberships, software subscriptions
-  Examples: ADOBE, MICROSOFT 365, ICLOUD, DROPBOX, ZOOM, LINKEDIN PREMIUM
-
-- Pet Care: Pet food, vet visits, pet supplies, grooming
-  Examples: PETCO, PETSMART, VET, VETERINARY, PET GROOMING
-
-- Other: ONLY use this if the transaction truly doesn't fit any category above
+TRANSFER CATEGORIES:
+Account Transfer, ATM/Cash, Credit Card Payments, HSA Contribution, IRA Contribution,
+Investment Buy, Investment Sell, Loan Payment, Loan Principal, Other Transfers, Roth Contribution,
+Savings, Stock Purchase, Stock Sale, Student Loan Payment, Transfers, 401k Contribution
 
 OUTPUT FORMAT:
 You must respond with a valid JSON array. Each transaction must have these fields:
 {
-  "transaction_type": "EXPENSE|INCOME|TRANSFER|PAYMENT|REFUND|FEE_INTEREST",
+  "transaction_type": "EXPENSE|INCOME|TRANSFER|UNCATEGORIZED",
   "merchant_normalized": "Clean merchant name",
-  "category": "Category name (or null for non-expense)",
+  "category": "Category name from the lists above",
   "subcategory": "Subcategory (optional)",
   "is_spend": boolean,
   "is_income": boolean,
@@ -114,11 +79,10 @@ def build_classification_prompt(transactions: list[dict]) -> str:
 
 Respond with a JSON array of classifications (one for each transaction in order).
 Remember the critical rules:
-- PAYMENT/TRANSFER → is_spend=false
-- INCOME → is_income=true, is_spend=false
-- REFUND → is_spend=false
-- FEE_INTEREST → is_spend=true
-- EXPENSE → is_spend=true
+- EXPENSE → is_spend=true, is_income=false (regular purchases, fees)
+- INCOME → is_spend=false, is_income=true (salary, refunds, returns)
+- TRANSFER → is_spend=false, is_income=false (payments, account transfers)
+- UNCATEGORIZED → is_spend=false, is_income=false (unknown)
 
 IMPORTANT FOR CATEGORIES:
 - Be SPECIFIC - match to the most appropriate category from the list

@@ -15,8 +15,8 @@ export interface Account {
 }
 
 // Transaction types
-export type TransactionType = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'PAYMENT' | 'REFUND' | 'FEE_INTEREST';
-export type ClassificationMethod = 'LLM' | 'RULE' | 'MANUAL' | 'DEFAULT';
+export type TransactionType = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'UNCATEGORIZED';
+export type ClassificationMethod = 'LLM' | 'RULE' | 'MANUAL' | 'DEFAULT' | 'LEARNED' | 'RECLASSIFIED';
 
 export interface Transaction {
   id: string;

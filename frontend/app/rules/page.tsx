@@ -3,39 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getRules, createRule, updateRule, deleteRule, toggleRule, getRuleMatchCount, applyRuleToTransactions } from '@/lib/api';
 import { Rule, RuleAction, RuleType, RuleListResponse } from '@/lib/types';
-
-// Empower-style categories
-const CATEGORIES = [
-  'Restaurants',
-  'Groceries',
-  'Gasoline/Fuel',
-  'Automotive',
-  'Shopping',
-  'Clothes',
-  'Entertainment',
-  'Travel',
-  'Bills & Utilities',
-  'Health & Fitness',
-  'Personal Care',
-  'Education',
-  'Gifts & Donations',
-  'Home',
-  'Taxes',
-  'Fees & Charges',
-  'Coffee Shops',
-  'Fast Food',
-  'Alcohol & Bars',
-  'Pharmacy',
-  'Pet Care',
-  'Electronics',
-  'Books',
-  'Office Supplies',
-  'Subscriptions',
-  'Insurance',
-  'Other Expenses',
-];
-
-const TRANSACTION_TYPES = ['EXPENSE', 'INCOME', 'PAYMENT', 'REFUND', 'TRANSFER', 'FEE_INTEREST'];
+import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 
 const RULE_TYPES: { value: RuleType; label: string; description: string }[] = [
   { value: 'MERCHANT_MATCH', label: 'Merchant Match', description: 'Match by merchant name (case-insensitive contains)' },
@@ -697,7 +665,29 @@ export default function RulesPage() {
                 <h4 className="text-sm font-medium text-gray-900 mb-4">Action (when rule matches)</h4>
 
                 <div className="grid grid-cols-2 gap-4">
-                  {/* Category */}
+                  {/* Transaction Type - moved first so category can depend on it */}
+                  <div>
+                    <label htmlFor="action-type" className="block text-sm font-medium text-gray-700 mb-1">
+                      Transaction Type *
+                    </label>
+                    <select
+                      id="action-type"
+                      value={formData.action.transaction_type || 'EXPENSE'}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        action: { ...formData.action, transaction_type: e.target.value, category: '' }
+                      })}
+                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    >
+                      {TRANSACTION_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {type.charAt(0) + type.slice(1).toLowerCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Category - filtered by transaction type */}
                   <div>
                     <label htmlFor="action-category" className="block text-sm font-medium text-gray-700 mb-1">
                       Category *
@@ -712,36 +702,15 @@ export default function RulesPage() {
                       className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                     >
                       <option value="">Select category...</option>
-                      {CATEGORIES.map((cat) => (
-                        <option key={cat} value={cat}>
-                          {cat}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Transaction Type */}
-                  <div>
-                    <label htmlFor="action-type" className="block text-sm font-medium text-gray-700 mb-1">
-                      Transaction Type
-                    </label>
-                    <select
-                      id="action-type"
-                      value={formData.action.transaction_type || 'EXPENSE'}
-                      onChange={(e) => setFormData({
-                        ...formData,
-                        action: { ...formData.action, transaction_type: e.target.value }
-                      })}
-                      className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-                    >
-                      {TRANSACTION_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
+                      {getCategoriesForType(formData.action.transaction_type || 'EXPENSE').map((cat) => (
+                        <option key={cat.id} value={cat.name}>
+                          {cat.name}
                         </option>
                       ))}
                     </select>
                   </div>
                 </div>
+
               </div>
 
               {/* Priority */}

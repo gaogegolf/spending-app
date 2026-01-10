@@ -3,37 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
-
-// Empower-style categories
-const CATEGORIES = [
-  'Restaurants',
-  'Groceries',
-  'Gasoline/Fuel',
-  'Automotive',
-  'Shopping',
-  'Clothes',
-  'Entertainment',
-  'Travel',
-  'Bills & Utilities',
-  'Health & Fitness',
-  'Personal Care',
-  'Education',
-  'Gifts & Donations',
-  'Home',
-  'Taxes',
-  'Fees & Charges',
-  'Coffee Shops',
-  'Fast Food',
-  'Alcohol & Bars',
-  'Pharmacy',
-  'Pet Care',
-  'Electronics',
-  'Books',
-  'Office Supplies',
-  'Subscriptions',
-  'Insurance',
-  'Other Expenses',
-];
+import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -255,7 +225,7 @@ export default function TransactionsPage() {
 
       // Update the transaction in local state
       setTransactions(transactions.map(t =>
-        t.id === transactionId ? { ...t, category: newCategory, classification_method: 'MANUAL' } : t
+        t.id === transactionId ? { ...t, category: newCategory, classification_method: 'MANUAL' as const } : t
       ));
 
       setEditingCategoryId(null);
@@ -275,7 +245,7 @@ export default function TransactionsPage() {
 
       // Update the transaction in local state
       setTransactions(transactions.map(t =>
-        t.id === transactionId ? { ...t, transaction_type: newType, classification_method: 'MANUAL' } : t
+        t.id === transactionId ? { ...t, transaction_type: newType as Transaction['transaction_type'], classification_method: 'MANUAL' as const } : t
       ));
 
       setEditingTypeId(null);
@@ -313,14 +283,10 @@ export default function TransactionsPage() {
         return 'bg-red-100 text-red-800';
       case 'INCOME':
         return 'bg-green-100 text-green-800';
-      case 'PAYMENT':
-        return 'bg-blue-100 text-blue-800';
-      case 'REFUND':
-        return 'bg-purple-100 text-purple-800';
       case 'TRANSFER':
-        return 'bg-gray-100 text-gray-800';
-      case 'FEE_INTEREST':
-        return 'bg-orange-100 text-orange-800';
+        return 'bg-blue-100 text-blue-800';
+      case 'UNCATEGORIZED':
+        return 'bg-yellow-100 text-yellow-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
@@ -512,17 +478,17 @@ export default function TransactionsPage() {
               value={typeFilter}
               onChange={(e) => {
                 setTypeFilter(e.target.value);
+                setCategoryFilter(''); // Clear category when type changes
                 setPage(1);
               }}
               className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
             >
               <option value="">All Types</option>
-              <option value="EXPENSE">Expense</option>
-              <option value="INCOME">Income</option>
-              <option value="PAYMENT">Payment</option>
-              <option value="REFUND">Refund</option>
-              <option value="TRANSFER">Transfer</option>
-              <option value="FEE_INTEREST">Fee/Interest</option>
+              {TRANSACTION_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type.charAt(0) + type.slice(1).toLowerCase()}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -541,9 +507,9 @@ export default function TransactionsPage() {
               className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
             >
               <option value="">All Categories</option>
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
+              {getCategoriesForType(typeFilter).map((cat) => (
+                <option key={cat.id} value={cat.name}>
+                  {cat.name}
                 </option>
               ))}
             </select>
@@ -853,9 +819,9 @@ export default function TransactionsPage() {
                           className="w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                         >
                           <option value="">Select category...</option>
-                          {CATEGORIES.map((cat) => (
-                            <option key={cat} value={cat}>
-                              {cat}
+                          {getCategoriesForType(transaction.transaction_type).map((cat) => (
+                            <option key={cat.id} value={cat.name}>
+                              {cat.name}
                             </option>
                           ))}
                         </select>
@@ -882,12 +848,11 @@ export default function TransactionsPage() {
                           onBlur={() => setEditingTypeId(null)}
                           className="px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm"
                         >
-                          <option value="EXPENSE">Expense</option>
-                          <option value="INCOME">Income</option>
-                          <option value="PAYMENT">Payment</option>
-                          <option value="REFUND">Refund</option>
-                          <option value="TRANSFER">Transfer</option>
-                          <option value="FEE_INTEREST">Fee/Interest</option>
+                          {TRANSACTION_TYPES.map((type) => (
+                            <option key={type} value={type}>
+                              {type.charAt(0) + type.slice(1).toLowerCase()}
+                            </option>
+                          ))}
                         </select>
                       ) : (
                         <button

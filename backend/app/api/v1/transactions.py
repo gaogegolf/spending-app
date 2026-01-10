@@ -327,7 +327,7 @@ def reclassify_all_transactions(
 
         for transaction in batch:
             # Skip payments, transfers, income, refunds (keep their type)
-            if transaction.transaction_type in ['PAYMENT', 'TRANSFER', 'INCOME', 'REFUND']:
+            if transaction.transaction_type in ['TRANSFER', 'INCOME']:
                 continue
 
             # Convert to dict format for classification
