@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 const navLinks = [
   { href: '/', label: 'Dashboard' },
+  { href: '/accounts', label: 'Accounts' },
   { href: '/imports', label: 'Import' },
   { href: '/transactions', label: 'Transactions' },
   { href: '/merchant-categories', label: 'Merchants' },
