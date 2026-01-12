@@ -341,7 +341,7 @@ export default function Dashboard() {
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8">
               <h3 className="text-2xl font-bold text-gray-900 mb-8">Categories</h3>
               <div className="space-y-5">
-                {summary.category_breakdown.slice(0, 8).map((category, index) => {
+                {[...summary.category_breakdown].sort((a, b) => b.amount - a.amount).slice(0, 8).map((category, index) => {
                   const gradients = [
                     'from-blue-500 to-cyan-500',
                     'from-purple-500 to-pink-500',
