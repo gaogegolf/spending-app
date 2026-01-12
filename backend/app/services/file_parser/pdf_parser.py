@@ -335,41 +335,65 @@ class PDFParser(BaseParser):
                 continue
 
             # Handle multi-line credit format (amount on separate line)
-            # Example:
+            # Example 1:
             #   06/06/25* K950:0012 500.00 credit
             #   TRANSACTION PROCESSED BY AMERICAN EXPRESS    -$500.00 ⧫
+            # Example 2 (BEST BUY with 3 description lines):
+            #   07/06/25 BEST BUY
+            #   SAN CARLOS CA
+            #   888BESTBUY
+            #   -$1,286.31 ⧫
             date_only_match = re.match(date_only_pattern, line)
             if date_only_match and current_section in ['credits', 'payments_credits', 'payments']:
                 date_str = date_only_match.group(1)
                 description = date_only_match.group(2)
 
                 # Look at next line(s) for continuation and amount
+                # Increased lookahead to 5 lines to handle multi-line descriptions
                 amount_str = None
                 is_credit = False
                 j = i + 1
-                while j < len(lines) and j < i + 3:  # Look ahead up to 2 lines
+                while j < len(lines) and j < i + 6:  # Look ahead up to 5 lines
                     next_line = lines[j].strip()
                     if not next_line:
                         j += 1
                         continue
 
-                    # Check if next line has amount
+                    # Stop if we hit a new transaction (line starting with date)
+                    if re.match(r'^\d{2}/\d{2}/\d{2}', next_line):
+                        break
+
+                    # Stop if we hit a section header
+                    if 'New Charges' in next_line or 'Fees' in next_line or \
+                       'Total' in next_line or 'Summary' in next_line:
+                        break
+
+                    # Check if this line is just an amount (standalone amount line)
+                    # Pattern: -$1,286.31 ⧫ or $500.00 ⧫
+                    standalone_amount_match = re.match(r'^-?\$?([\d,]+\.\d{2})\s*⧫?\s*$', next_line)
+                    if standalone_amount_match:
+                        amount_str = standalone_amount_match.group(1)
+                        # Check if it's a credit (has - prefix)
+                        if next_line.strip().startswith('-'):
+                            is_credit = True
+                        break
+
+                    # Check if line ends with amount
                     amount_match = re.search(amount_pattern, next_line)
                     if amount_match:
-                        # Check if it's a credit (has - prefix)
-                        if '-$' in next_line or (next_line.strip().startswith('-') and '$' in next_line):
+                        # Check if it's a credit (has - prefix before amount)
+                        if '-$' in next_line or re.search(r'-\s*\$?[\d,]+\.\d{2}', next_line):
                             is_credit = True
                         amount_str = amount_match.group(1)
 
                         # Get description continuation (text before amount)
                         desc_part = re.sub(amount_pattern, '', next_line).strip()
-                        if desc_part and not desc_part.startswith('$'):
+                        if desc_part and not desc_part.startswith('$') and not desc_part.startswith('-$'):
                             description = f"{description} {desc_part}"
                         break
                     else:
                         # This line is description continuation
-                        if not re.match(r'^\d{2}/\d{2}/\d{2}', next_line):  # Not a new transaction
-                            description = f"{description} {next_line}"
+                        description = f"{description} {next_line}"
                     j += 1
 
                 if amount_str:
