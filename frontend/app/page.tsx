@@ -143,8 +143,6 @@ export default function Dashboard() {
     ? ((currentMonthSpend - prevMonthSpend) / prevMonthSpend) * 100
     : 0;
 
-  const last6Months = yearlySummary?.monthly_data.slice(-6) || [];
-  const maxSpend = Math.max(...last6Months.map(m => m.total_spend), 1);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 pb-12">
@@ -294,37 +292,41 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Spending Trend Chart */}
-        {last6Months.length > 0 && (
+        {/* Yearly Spending Bar Chart */}
+        {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (
           <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
-            <h3 className="text-2xl font-bold text-gray-900 mb-8">Spending Trend</h3>
-            <div className="space-y-5">
-              {last6Months.map((monthData) => (
-                <div key={monthData.month} className="group">
-                  <div className="flex items-center gap-6">
-                    <div className="w-20 text-base font-bold text-gray-700">
-                      {monthData.month_name.substring(0, 3)}
-                    </div>
-                    <div className="flex-1">
-                      <div className="w-full bg-gradient-to-r from-gray-200 to-gray-300 rounded-2xl h-14 relative overflow-hidden shadow-inner">
-                        <div
-                          className="absolute inset-0 bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-2xl flex items-center justify-end pr-6 transition-all duration-700 ease-out group-hover:from-indigo-600 group-hover:via-purple-600 group-hover:to-pink-600"
-                          style={{ width: `${(monthData.total_spend / maxSpend) * 100}%`, minWidth: '80px' }}
-                        >
-                          <span className="text-white text-lg font-black drop-shadow-lg">
-                            ${monthData.total_spend.toFixed(0)}
-                          </span>
+            <h3 className="text-2xl font-bold text-gray-900 mb-8">{selectedYear} Spending</h3>
+            <div className="flex items-end justify-between gap-2 h-64">
+              {yearlySummary.monthly_data.map((monthData) => {
+                const maxYearSpend = Math.max(...yearlySummary.monthly_data.map(m => m.total_spend), 1);
+                const heightPercent = (monthData.total_spend / maxYearSpend) * 100;
+                const isCurrentMonth = monthData.month === selectedMonth;
+
+                return (
+                  <div key={monthData.month} className="flex-1 flex flex-col items-center group">
+                    <div className="relative w-full flex flex-col items-center">
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-16 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-10">
+                        ${monthData.total_spend.toFixed(0)}
+                        <div className="text-gray-400 text-xs">{monthData.transaction_count} txns</div>
+                        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                          <div className="border-8 border-transparent border-t-gray-900"></div>
                         </div>
                       </div>
+                      <div
+                        className={`w-full max-w-12 rounded-t-lg transition-all duration-300 cursor-pointer ${
+                          isCurrentMonth
+                            ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30'
+                            : 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-indigo-400 group-hover:to-purple-400'
+                        }`}
+                        style={{ height: `${Math.max(heightPercent, 2)}%` }}
+                      ></div>
                     </div>
-                    <div className="w-32 text-right">
-                      <div className="inline-flex items-center px-4 py-2 bg-indigo-100 rounded-xl">
-                        <span className="text-sm font-bold text-indigo-700">{monthData.transaction_count} txns</span>
-                      </div>
+                    <div className={`mt-3 text-sm font-bold ${isCurrentMonth ? 'text-indigo-600' : 'text-gray-600'}`}>
+                      {monthData.month_name.substring(0, 3)}
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
