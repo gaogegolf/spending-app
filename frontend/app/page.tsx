@@ -293,43 +293,47 @@ export default function Dashboard() {
         </div>
 
         {/* Yearly Spending Bar Chart */}
-        {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (
-          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
-            <h3 className="text-2xl font-bold text-gray-900 mb-8">{selectedYear} Spending</h3>
-            <div className="flex items-end justify-between gap-2 h-64">
-              {yearlySummary.monthly_data.map((monthData) => {
-                const maxYearSpend = Math.max(...yearlySummary.monthly_data.map(m => m.total_spend), 1);
-                const heightPercent = (monthData.total_spend / maxYearSpend) * 100;
-                const isCurrentMonth = monthData.month === selectedMonth;
+        {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (() => {
+          const maxYearSpend = Math.max(...yearlySummary.monthly_data.map(m => m.total_spend), 1);
+          const chartHeight = 200; // pixels
 
-                return (
-                  <div key={monthData.month} className="flex-1 flex flex-col items-center group">
-                    <div className="relative w-full flex flex-col items-center">
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-16 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-10">
-                        ${monthData.total_spend.toFixed(0)}
-                        <div className="text-gray-400 text-xs">{monthData.transaction_count} txns</div>
-                        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
-                          <div className="border-8 border-transparent border-t-gray-900"></div>
+          return (
+            <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
+              <h3 className="text-2xl font-bold text-gray-900 mb-8">{selectedYear} Spending</h3>
+              <div className="flex items-end justify-between gap-2" style={{ height: `${chartHeight}px` }}>
+                {yearlySummary.monthly_data.map((monthData) => {
+                  const barHeight = Math.max((monthData.total_spend / maxYearSpend) * chartHeight, 4);
+                  const isCurrentMonth = monthData.month === selectedMonth;
+
+                  return (
+                    <div key={monthData.month} className="flex-1 flex flex-col items-center group">
+                      <div className="relative flex items-end justify-center w-full" style={{ height: `${chartHeight}px` }}>
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-10">
+                          ${monthData.total_spend.toFixed(0)}
+                          <div className="text-gray-400 text-xs">{monthData.transaction_count} txns</div>
+                          <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                            <div className="border-8 border-transparent border-t-gray-900"></div>
+                          </div>
                         </div>
+                        <div
+                          className={`w-full max-w-10 rounded-t-lg transition-all duration-300 cursor-pointer ${
+                            isCurrentMonth
+                              ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30'
+                              : 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-indigo-400 group-hover:to-purple-400'
+                          }`}
+                          style={{ height: `${barHeight}px` }}
+                        ></div>
                       </div>
-                      <div
-                        className={`w-full max-w-12 rounded-t-lg transition-all duration-300 cursor-pointer ${
-                          isCurrentMonth
-                            ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30'
-                            : 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-indigo-400 group-hover:to-purple-400'
-                        }`}
-                        style={{ height: `${Math.max(heightPercent, 2)}%` }}
-                      ></div>
+                      <div className={`mt-3 text-sm font-bold ${isCurrentMonth ? 'text-indigo-600' : 'text-gray-600'}`}>
+                        {monthData.month_name.substring(0, 3)}
+                      </div>
                     </div>
-                    <div className={`mt-3 text-sm font-bold ${isCurrentMonth ? 'text-indigo-600' : 'text-gray-600'}`}>
-                      {monthData.month_name.substring(0, 3)}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
           {/* Category Breakdown */}
