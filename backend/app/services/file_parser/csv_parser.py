@@ -249,7 +249,7 @@ class CSVParser(BaseParser):
         date_col = self.column_mapping.get('date')
         desc_col = self.column_mapping.get('description')
 
-        for _, row in self.df.iterrows():
+        for row_index, (_, row) in enumerate(self.df.iterrows()):
             try:
                 # Parse date
                 date_str = str(row[date_col])
@@ -267,6 +267,7 @@ class CSVParser(BaseParser):
                     'amount': amount,
                     'currency': 'USD',  # Default, can be detected or specified
                     'metadata': row.to_dict(),
+                    'row_index': row_index,  # Track position in file for deduplication
                 }
 
                 # Add is_credit flag if available

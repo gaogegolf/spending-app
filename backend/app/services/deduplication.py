@@ -1,4 +1,13 @@
-"""Transaction deduplication service using hash-based detection."""
+"""Transaction deduplication service using hash-based detection.
+
+Deduplication Strategy:
+- Uses file_hash (SHA256 of file content) + row_index (position in file) to identify each transaction
+- This ensures that:
+  1. Two transactions with same date/amount/description from different files are NOT duplicates
+  2. Re-uploading the same file will correctly identify all transactions as duplicates
+- The row_index is added during parsing (CSV/PDF parsers)
+- The file_hash is calculated during upload and stored in ImportRecord
+"""
 
 import hashlib
 import re
@@ -18,50 +27,31 @@ class DeduplicationService:
         """
         self.db = db
 
-    def generate_hash(self, account_id: str, transaction_data: Dict[str, Any]) -> str:
+    def generate_hash(self, account_id: str, file_hash: str, transaction_data: Dict[str, Any]) -> str:
         """Generate a deterministic hash for transaction deduplication.
 
         The hash is based on:
-        - Account ID
-        - Transaction date
-        - Amount (rounded to 2 decimals)
-        - Normalized description
+        - Account ID (to scope duplicates per account)
+        - File hash (SHA256 of the uploaded file)
+        - Row index (position of transaction within the file)
+
+        This ensures that:
+        - Same file re-uploaded → same hash → detected as duplicate
+        - Different files with similar transactions → different hash → NOT duplicates
 
         Args:
             account_id: Account ID
-            transaction_data: Dict containing date, amount, description_raw
+            file_hash: SHA256 hash of the source file
+            transaction_data: Dict containing row_index from parser
 
         Returns:
             SHA256 hash string (64 characters)
         """
-        # Extract components
         account_id = str(account_id)
+        row_index = transaction_data.get('row_index', 0)
 
-        # Handle date (could be string or date object)
-        txn_date = transaction_data.get('date')
-        if isinstance(txn_date, str):
-            try:
-                txn_date = datetime.fromisoformat(txn_date).date()
-            except:
-                txn_date = date.today()
-        elif isinstance(txn_date, datetime):
-            txn_date = txn_date.date()
-        elif not isinstance(txn_date, date):
-            txn_date = date.today()
-
-        # Format date consistently
-        date_str = txn_date.isoformat()
-
-        # Round amount to 2 decimals
-        amount = float(transaction_data.get('amount', 0))
-        amount_str = f"{amount:.2f}"
-
-        # Normalize description
-        description = transaction_data.get('description_raw', '')
-        normalized_desc = DeduplicationService._normalize_description(description)
-
-        # Combine components
-        hash_input = f"{account_id}|{date_str}|{amount_str}|{normalized_desc}"
+        # Combine components: account_id + file_hash + row_index
+        hash_input = f"{account_id}|{file_hash}|{row_index}"
 
         # Generate SHA256 hash
         return hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
@@ -139,12 +129,14 @@ class DeduplicationService:
     def check_duplicates(
         self,
         account_id: str,
+        file_hash: str,
         transactions: List[Dict[str, Any]]
     ) -> Set[str]:
         """Check which transactions already exist in the database.
 
         Args:
             account_id: Account ID
+            file_hash: SHA256 hash of the source file
             transactions: List of transaction dictionaries
 
         Returns:
@@ -154,7 +146,7 @@ class DeduplicationService:
 
         # Generate hashes for all transactions
         hashes = {
-            self.generate_hash(account_id, txn)
+            self.generate_hash(account_id, file_hash, txn)
             for txn in transactions
         }
 
@@ -169,23 +161,25 @@ class DeduplicationService:
     def filter_duplicates(
         self,
         account_id: str,
+        file_hash: str,
         transactions: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Filter out transactions that already exist in database.
 
         Args:
             account_id: Account ID
+            file_hash: SHA256 hash of the source file
             transactions: List of transaction dictionaries
 
         Returns:
             List of new (non-duplicate) transactions
         """
-        duplicate_hashes = self.check_duplicates(account_id, transactions)
+        duplicate_hashes = self.check_duplicates(account_id, file_hash, transactions)
 
         # Filter out duplicates
         new_transactions = []
         for txn in transactions:
-            txn_hash = self.generate_hash(account_id, txn)
+            txn_hash = self.generate_hash(account_id, file_hash, txn)
             if txn_hash not in duplicate_hashes:
                 new_transactions.append(txn)
 

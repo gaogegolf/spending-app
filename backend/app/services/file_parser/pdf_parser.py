@@ -265,6 +265,7 @@ class PDFParser(BaseParser):
         transactions = []
         lines = text.split('\n')
         current_section = None
+        row_index = 0  # Track row position for deduplication
 
         # Patterns for Amex transactions
         # Credit pattern: MM/DD/YY DESCRIPTION -$AMOUNT
@@ -304,6 +305,8 @@ class PDFParser(BaseParser):
                     section=current_section
                 )
                 if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
                     transactions.append(txn)
                 continue
 
@@ -318,6 +321,8 @@ class PDFParser(BaseParser):
                     section=current_section
                 )
                 if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
                     transactions.append(txn)
 
         return transactions
@@ -343,22 +348,24 @@ class PDFParser(BaseParser):
             year_full = 2000 + int(year)
             parsed_date = datetime(year_full, int(month), int(day)).date()
 
-            # Clean amount
+            # Clean amount - keep as negative for credits/refunds
             amount = float(amount_str.replace(',', ''))
+            if is_credit:
+                amount = -amount  # Credits are negative expenses (refunds, reimbursements)
 
             # Clean merchant description
             cleaned_merchant = self._clean_amex_merchant(description)
 
-            # Determine if this is a payment (should be excluded or marked as transfer)
+            # Determine if this is a payment (should be marked as transfer)
             is_payment = 'AUTOPAY' in description.upper() or \
-                         'PAYMENT' in description.upper() and 'THANK YOU' in description.upper()
+                         ('PAYMENT' in description.upper() and 'THANK YOU' in description.upper())
 
             return {
                 'date': parsed_date.isoformat(),
                 'description_raw': description,
                 'merchant_normalized': cleaned_merchant,
-                'amount': amount,
-                'is_credit': is_credit or is_payment,
+                'amount': amount,  # Negative for credits, positive for charges
+                'is_payment': is_payment,  # Flag for transfers (payments to card)
                 'currency': 'USD',
             }
 
@@ -486,6 +493,7 @@ class PDFParser(BaseParser):
             List of transaction dictionaries
         """
         transactions = []
+        row_index = 0  # Track row position for deduplication
 
         try:
             for page in self.pdf.pages:
@@ -504,7 +512,8 @@ class PDFParser(BaseParser):
 
                 if credits_match:
                     credits_text = credits_match.group(0)
-                    credit_transactions = self._parse_fidelity_text_section(credits_text, is_credit=True)
+                    credit_transactions = self._parse_fidelity_text_section(credits_text, is_credit=True, start_row_index=row_index)
+                    row_index += len(credit_transactions)
                     transactions.extend(credit_transactions)
 
                 # Extract debits section
@@ -513,7 +522,8 @@ class PDFParser(BaseParser):
 
                 if debits_match:
                     debits_text = debits_match.group(0)
-                    debit_transactions = self._parse_fidelity_text_section(debits_text, is_credit=False)
+                    debit_transactions = self._parse_fidelity_text_section(debits_text, is_credit=False, start_row_index=row_index)
+                    row_index += len(debit_transactions)
                     transactions.extend(debit_transactions)
 
             return transactions
@@ -522,7 +532,7 @@ class PDFParser(BaseParser):
             print(f"Text extraction fallback failed: {str(e)}")
             return []
 
-    def _parse_fidelity_text_section(self, text: str, is_credit: bool) -> List[Dict[str, Any]]:
+    def _parse_fidelity_text_section(self, text: str, is_credit: bool, start_row_index: int = 0) -> List[Dict[str, Any]]:
         """Parse a section of Fidelity text (Credits or Debits) to extract transactions.
 
         Fidelity transaction line format:
@@ -535,11 +545,13 @@ class PDFParser(BaseParser):
         Args:
             text: Text section containing transactions
             is_credit: Whether this is from the credits section
+            start_row_index: Starting row index for deduplication
 
         Returns:
             List of transaction dictionaries
         """
         transactions = []
+        row_index = start_row_index
 
         # Transaction pattern: MM/DD MM/DD REF# DESCRIPTION $AMOUNT[CR]
         # Note: Date format is MM/DD (not MM/DD/YY), CR has no space
@@ -601,14 +613,23 @@ class PDFParser(BaseParser):
                     amount_clean = amount_str.replace(',', '').strip()
                     amount = abs(float(amount_clean))
 
+                    # Credits (payments, refunds) are stored as negative amounts
+                    if is_credit:
+                        amount = -amount
+
+                    # Detect if this is a payment to the card (transfer, not spending)
+                    is_payment = 'PAYMENT' in description.upper() and 'THANK YOU' in description.upper()
+
                     transactions.append({
                         'date': parsed_date.isoformat(),
                         'description_raw': description,
                         'merchant_normalized': cleaned_merchant,
-                        'amount': amount,
-                        'is_credit': is_credit,
+                        'amount': amount,  # Negative for credits, positive for charges
+                        'is_payment': is_payment,
                         'currency': 'USD',
+                        'row_index': row_index,
                     })
+                    row_index += 1
 
                 except Exception as e:
                     # Skip invalid lines
@@ -672,12 +693,15 @@ class PDFParser(BaseParser):
             Merged DataFrame with standardized columns
         """
         merged_rows = []
+        row_index = 0  # Track row position for deduplication
 
         # Process credit table
         if credit_table is not None:
             for _, row in credit_table.iterrows():
                 parsed_row = self._parse_fidelity_row(row, is_credit=True)
                 if parsed_row:
+                    parsed_row['row_index'] = row_index
+                    row_index += 1
                     merged_rows.append(parsed_row)
 
         # Process debit table
@@ -685,6 +709,8 @@ class PDFParser(BaseParser):
             for _, row in debit_table.iterrows():
                 parsed_row = self._parse_fidelity_row(row, is_credit=False)
                 if parsed_row:
+                    parsed_row['row_index'] = row_index
+                    row_index += 1
                     merged_rows.append(parsed_row)
 
         if not merged_rows:
@@ -765,12 +791,19 @@ class PDFParser(BaseParser):
             amount_clean = amount_str.replace('CR', '').replace('$', '').replace(',', '').strip()
             amount = abs(float(amount_clean))
 
+            # Credits are stored as negative amounts
+            if is_credit:
+                amount = -amount
+
+            # Detect if this is a payment to the card (transfer, not spending)
+            is_payment = 'PAYMENT' in description.upper() and 'THANK YOU' in description.upper()
+
             return {
                 'date': parsed_date.isoformat(),
                 'description_raw': description,
                 'merchant_normalized': cleaned_merchant,
-                'amount': amount,
-                'is_credit': is_credit,
+                'amount': amount,  # Negative for credits, positive for charges
+                'is_payment': is_payment,
                 'currency': 'USD',
             }
 
@@ -807,6 +840,7 @@ class PDFParser(BaseParser):
     def _to_transactions(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Convert merged DataFrame to transaction dictionaries."""
         transactions = df.to_dict('records')
+        # row_index is already set in _merge_credit_debit_tables
         return transactions
 
     def detect_format(self) -> Dict[str, Any]:
