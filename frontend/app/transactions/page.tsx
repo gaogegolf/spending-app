@@ -282,10 +282,12 @@ export default function TransactionsPage() {
     return sortedTransactions.reduce((sum, transaction) => {
       const amount = parseFloat(transaction.amount);
       // Subtract expenses, add income
+      // Note: Income from refunds/credits is stored as negative amounts,
+      // so we subtract (which adds when amount is negative)
       if (transaction.is_spend) {
         return sum - amount;
       } else if (transaction.is_income) {
-        return sum + amount;
+        return sum - amount;  // Subtracting negative amount = adding
       }
       // For other types (transfers, payments, etc.), don't include in net
       return sum;
