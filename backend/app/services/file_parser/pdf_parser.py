@@ -268,13 +268,18 @@ class PDFParser(BaseParser):
         row_index = 0  # Track row position for deduplication
 
         # Patterns for Amex transactions
-        # Credit pattern: MM/DD/YY DESCRIPTION -$AMOUNT
+        # Credit pattern: MM/DD/YY DESCRIPTION -$AMOUNT (all on one line)
         credit_pattern = r'^(\d{2}/\d{2}/\d{2})\*?\s+(.+?)\s+-\$?([\d,]+\.\d{2})⧫?$'
         # Charge pattern: MM/DD/YY DESCRIPTION $AMOUNT
         charge_pattern = r'^(\d{2}/\d{2}/\d{2})\*?\s+(.+?)\s+\$?([\d,]+\.\d{2})⧫?$'
+        # Date-only pattern for multi-line credits: MM/DD/YY* DESCRIPTION (no amount on line)
+        date_only_pattern = r'^(\d{2}/\d{2}/\d{2})\*?\s+(.+?)$'
+        # Amount-only pattern: -$AMOUNT or $AMOUNT at end of line
+        amount_pattern = r'-?\$?([\d,]+\.\d{2})⧫?\s*$'
 
-        for line in lines:
-            line = line.strip()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
 
             # Detect section headers
             if 'Payments and Credits' in line or 'Detail' in line and 'Payments' in line:
@@ -292,9 +297,10 @@ class PDFParser(BaseParser):
             if not line or 'Account Ending' in line or 'Closing Date' in line or \
                'Customer Care' in line or 'Page' in line or 'Summary' in line or \
                'Total' in line or line.startswith('Card Ending'):
+                i += 1
                 continue
 
-            # Try to match credit (negative amount) pattern first
+            # Try to match credit (negative amount) pattern first (single line)
             credit_match = re.match(credit_pattern, line)
             if credit_match:
                 txn = self._parse_amex_transaction_line(
@@ -308,9 +314,10 @@ class PDFParser(BaseParser):
                     txn['row_index'] = row_index
                     row_index += 1
                     transactions.append(txn)
+                i += 1
                 continue
 
-            # Try to match charge (positive amount) pattern
+            # Try to match charge (positive amount) pattern (single line)
             charge_match = re.match(charge_pattern, line)
             if charge_match:
                 txn = self._parse_amex_transaction_line(
@@ -324,6 +331,63 @@ class PDFParser(BaseParser):
                     txn['row_index'] = row_index
                     row_index += 1
                     transactions.append(txn)
+                i += 1
+                continue
+
+            # Handle multi-line credit format (amount on separate line)
+            # Example:
+            #   06/06/25* K950:0012 500.00 credit
+            #   TRANSACTION PROCESSED BY AMERICAN EXPRESS    -$500.00 ⧫
+            date_only_match = re.match(date_only_pattern, line)
+            if date_only_match and current_section in ['credits', 'payments_credits', 'payments']:
+                date_str = date_only_match.group(1)
+                description = date_only_match.group(2)
+
+                # Look at next line(s) for continuation and amount
+                amount_str = None
+                is_credit = False
+                j = i + 1
+                while j < len(lines) and j < i + 3:  # Look ahead up to 2 lines
+                    next_line = lines[j].strip()
+                    if not next_line:
+                        j += 1
+                        continue
+
+                    # Check if next line has amount
+                    amount_match = re.search(amount_pattern, next_line)
+                    if amount_match:
+                        # Check if it's a credit (has - prefix)
+                        if '-$' in next_line or (next_line.strip().startswith('-') and '$' in next_line):
+                            is_credit = True
+                        amount_str = amount_match.group(1)
+
+                        # Get description continuation (text before amount)
+                        desc_part = re.sub(amount_pattern, '', next_line).strip()
+                        if desc_part and not desc_part.startswith('$'):
+                            description = f"{description} {desc_part}"
+                        break
+                    else:
+                        # This line is description continuation
+                        if not re.match(r'^\d{2}/\d{2}/\d{2}', next_line):  # Not a new transaction
+                            description = f"{description} {next_line}"
+                    j += 1
+
+                if amount_str:
+                    txn = self._parse_amex_transaction_line(
+                        date_str,
+                        description,
+                        amount_str,
+                        is_credit=is_credit,
+                        section=current_section
+                    )
+                    if txn:
+                        txn['row_index'] = row_index
+                        row_index += 1
+                        transactions.append(txn)
+                    i = j + 1  # Skip the lines we processed
+                    continue
+
+            i += 1
 
         return transactions
 
