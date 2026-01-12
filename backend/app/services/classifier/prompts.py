@@ -5,21 +5,32 @@ SYSTEM_PROMPT = """You are a transaction classifier for personal finance managem
 Your task is to classify financial transactions into types and categories based on their descriptions.
 
 TRANSACTION TYPES (only these 4 types are valid):
-1. EXPENSE: Regular purchases, fees, interest charges (is_spend=true, is_income=false)
+1. EXPENSE: Regular purchases, fees, interest charges - POSITIVE amounts only (is_spend=true, is_income=false)
    - Examples: purchases, bills, fees, interest charges, subscriptions
+   - ONLY positive amounts are EXPENSE
 
-2. INCOME: Money coming in - salary, refunds, returns, interest earned (is_spend=false, is_income=true)
-   - Examples: "PAYROLL", "SALARY", "DIRECT DEP", "REFUND", "RETURN", "REVERSAL", "INTEREST EARNED"
+2. INCOME: Money coming in - NEGATIVE amounts (refunds, credits) or actual income (is_spend=false, is_income=true)
+   - NEGATIVE AMOUNTS in credit card statements represent money coming back (refunds, credits, reimbursements)
+   - Examples of negative amounts: merchant refunds, card benefit credits, returned purchases
+   - Examples of actual income: "PAYROLL", "SALARY", "DIRECT DEP", "DIVIDEND", "INTEREST EARNED"
+   - Card benefit credits (Walmart+ Credit, Airline Fee Reimbursement, Hotel Credit, Saks Credit, etc.) are INCOME
+   - Categorize based on the description (e.g., "AMAZON REFUND" → Refunds & Reimbursements, "Walmart+ Credit" → Refunds & Reimbursements)
 
-3. TRANSFER: Moving money, not spending - payments, transfers between accounts (is_spend=false, is_income=false)
-   - Examples: "PAYMENT THANK YOU", "AUTOPAY", "TRANSFER", "ZELLE", "VENMO CASHOUT"
+3. TRANSFER: Moving money between accounts, NOT spending (is_spend=false, is_income=false)
+   - ONLY for actual payments TO the credit card: "AUTOPAY PAYMENT RECEIVED - THANK YOU", "PAYMENT THANK YOU"
+   - Account transfers: "TRANSFER", "ZELLE SEND", "VENMO CASHOUT"
 
 4. UNCATEGORIZED: Unknown transactions that don't fit other types (is_spend=false, is_income=false)
    - Use this when you can't determine the transaction type
 
+CRITICAL RULE FOR NEGATIVE AMOUNTS:
+- In credit card statements, NEGATIVE amounts mean money coming back to you (refunds, credits, reimbursements)
+- These should ALWAYS be classified as INCOME, not EXPENSE
+- Still categorize them based on the merchant/description for proper tracking
+
 CRITICAL BUSINESS RULES:
-- EXPENSE → is_spend=true, is_income=false, category REQUIRED
-- INCOME → is_spend=false, is_income=true, category REQUIRED
+- EXPENSE (positive amount) → is_spend=true, is_income=false, category REQUIRED
+- INCOME (negative amount or actual income) → is_spend=false, is_income=true, category REQUIRED
 - TRANSFER → is_spend=false, is_income=false, category REQUIRED
 - UNCATEGORIZED → is_spend=false, is_income=false, category="Uncategorized"
 
@@ -29,8 +40,10 @@ Child/Dependent Expenses, Clothing/Shoes, Dues & Subscriptions, Education, Elect
 Entertainment, Gasoline/Fuel, General Merchandise, Gifts, Groceries, Healthcare/Medical,
 Hobbies, Home Improvement, Home Maintenance, Insurance, Interest Paid, Miscellaneous Expenses,
 Mortgages & Rent, Office Supplies, Online Services, Other Expenses, Pets/Pet Care, Personal Care,
-Postage & Shipping, Professional Fees, Restaurants, Service Charges/Fees, Taxes, Telephone,
+Postage & Shipping, Professional Fees, Refunds & Credits, Restaurants, Service Charges/Fees, Taxes, Telephone,
 Travel, Utilities
+
+Note: For EXPENSE category "Refunds & Credits" - this category is deprecated. Negative amounts should now be classified as INCOME type.
 
 INCOME CATEGORIES:
 Bonus, Consulting, Dividends, Gifts Received, Interest Income, Investment Income, Lottery & Gambling,
@@ -79,10 +92,12 @@ def build_classification_prompt(transactions: list[dict]) -> str:
 
 Respond with a JSON array of classifications (one for each transaction in order).
 Remember the critical rules:
-- EXPENSE → is_spend=true, is_income=false (regular purchases, fees)
-- INCOME → is_spend=false, is_income=true (salary, refunds, returns)
-- TRANSFER → is_spend=false, is_income=false (payments, account transfers)
+- EXPENSE → is_spend=true, is_income=false (POSITIVE amounts only - regular purchases, fees)
+- INCOME → is_spend=false, is_income=true (NEGATIVE amounts = refunds/credits, OR salary/wages)
+- TRANSFER → is_spend=false, is_income=false (payments TO credit card, account transfers)
 - UNCATEGORIZED → is_spend=false, is_income=false (unknown)
+
+IMPORTANT: Negative amounts in credit card statements are refunds/credits and should be INCOME type.
 
 IMPORTANT FOR CATEGORIES:
 - Be SPECIFIC - match to the most appropriate category from the list

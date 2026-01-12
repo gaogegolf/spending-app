@@ -187,6 +187,7 @@ class ImportService:
             # Run deduplication check (preview only, don't skip yet)
             duplicate_hashes = self.dedup_service.check_duplicates(
                 account_id=import_record.account_id,
+                file_hash=import_record.file_hash,
                 transactions=result.transactions
             )
 
@@ -238,10 +239,12 @@ class ImportService:
 
         try:
             parsed_txns = import_record.import_metadata['parsed_transactions']
+            file_hash = import_record.file_hash
 
             # Step 1: Deduplication - filter out existing transactions
             new_txns = self.dedup_service.filter_duplicates(
                 account_id=import_record.account_id,
+                file_hash=file_hash,
                 transactions=parsed_txns
             )
 
@@ -287,16 +290,32 @@ class ImportService:
                     if learned:
                         # Apply learned category
                         learned.times_applied += 1
-                        learned_txns.append({
-                            **txn,
-                            'transaction_type': 'EXPENSE',
-                            'category': learned.category,
-                            'is_spend': True,
-                            'is_income': False,
-                            'classification_method': 'LEARNED',
-                            'confidence': learned.confidence,
-                            'needs_review': False
-                        })
+                        amount = float(txn.get('amount', 0))
+
+                        # Negative amounts = INCOME (refunds/credits)
+                        # Positive amounts = EXPENSE
+                        if amount < 0:
+                            learned_txns.append({
+                                **txn,
+                                'transaction_type': 'INCOME',
+                                'category': learned.category,
+                                'is_spend': False,
+                                'is_income': True,
+                                'classification_method': 'LEARNED',
+                                'confidence': learned.confidence,
+                                'needs_review': False
+                            })
+                        else:
+                            learned_txns.append({
+                                **txn,
+                                'transaction_type': 'EXPENSE',
+                                'category': learned.category,
+                                'is_spend': True,
+                                'is_income': False,
+                                'classification_method': 'LEARNED',
+                                'confidence': learned.confidence,
+                                'needs_review': False
+                            })
                         continue
 
                 still_unmatched.append(txn)
@@ -324,8 +343,8 @@ class ImportService:
                 # Get the original transaction data
                 original_txn = new_txns[i] if i < len(new_txns) else {}
 
-                # Generate hash for deduplication
-                txn_hash = self.dedup_service.generate_hash(import_record.account_id, original_txn)
+                # Generate hash for deduplication using file_hash + row_index
+                txn_hash = self.dedup_service.generate_hash(import_record.account_id, file_hash, original_txn)
 
                 # Check for duplicates in database
                 existing = self.db.query(Transaction).filter(
@@ -344,15 +363,18 @@ class ImportService:
                     continue
 
                 # Merge original transaction data with classification
-                # Original data has: date, amount, description_raw, merchant_normalized, currency, is_credit
+                # Original data has: date, amount, description_raw, merchant_normalized, currency, is_credit, row_index
                 # Classification has: transaction_type, category, subcategory, is_spend, is_income, etc.
                 merged_data = {
                     **original_txn,  # Start with original data
                     **classified_data  # Override/add classification fields
                 }
 
-                # Remove is_credit field (not part of Transaction model)
-                merged_data.pop('is_credit', None)
+                # Remove fields not part of Transaction model
+                merged_data.pop('is_credit', None)  # Legacy field
+                merged_data.pop('is_payment', None)  # Used for classification only
+                merged_data.pop('row_index', None)  # Used for deduplication only, not stored
+                merged_data.pop('metadata', None)  # CSV metadata, not directly stored
 
                 # Convert date from string to date object if needed
                 if 'date' in merged_data and isinstance(merged_data['date'], str):
@@ -407,14 +429,34 @@ class ImportService:
         """Apply default classification when LLM is disabled or fails.
 
         Priority order:
-        1. Check learned merchant categories (user corrections)
-        2. Apply keyword-based rules for transaction types
-        3. Use merchant pattern matching for categories
+        1. Check for payment flag (credit card payments are transfers)
+        2. Check learned merchant categories (user corrections)
+        3. Check for negative amounts (refunds/credits = INCOME)
+        4. Apply keyword-based rules for transaction types
+        5. Use merchant pattern matching for categories
+
+        IMPORTANT: Negative amounts in credit card statements represent refunds/credits
+        and should be classified as INCOME, not EXPENSE.
         """
         from app.models.merchant_category import MerchantCategory
 
         description = txn_data.get('description_raw', '').upper()
         merchant_normalized = txn_data.get('merchant_normalized', '')
+        amount = float(txn_data.get('amount', 0))
+        is_payment = txn_data.get('is_payment', False)
+
+        # Priority 0: Check if this is a payment to the credit card (transfer)
+        if is_payment:
+            return {
+                **txn_data,
+                'transaction_type': 'TRANSFER',
+                'category': 'Credit Card Payments',
+                'is_spend': False,
+                'is_income': False,
+                'classification_method': 'DEFAULT',
+                'confidence': 0.9,
+                'needs_review': False
+            }
 
         # Priority 1: Check if we've learned a category for this merchant
         if merchant_normalized:
@@ -428,18 +470,33 @@ class ImportService:
                 learned.times_applied += 1
                 self.db.flush()  # Update counter immediately
 
-                return {
-                    **txn_data,
-                    'transaction_type': 'EXPENSE',  # Assume expense for learned categories
-                    'category': learned.category,
-                    'is_spend': True,
-                    'is_income': False,
-                    'classification_method': 'LEARNED',
-                    'confidence': learned.confidence,
-                    'needs_review': False
-                }
+                # Negative amounts = INCOME (refunds/credits)
+                # Positive amounts = EXPENSE
+                if amount < 0:
+                    return {
+                        **txn_data,
+                        'transaction_type': 'INCOME',
+                        'category': learned.category,
+                        'is_spend': False,
+                        'is_income': True,
+                        'classification_method': 'LEARNED',
+                        'confidence': learned.confidence,
+                        'needs_review': False
+                    }
+                else:
+                    return {
+                        **txn_data,
+                        'transaction_type': 'EXPENSE',
+                        'category': learned.category,
+                        'is_spend': True,
+                        'is_income': False,
+                        'classification_method': 'LEARNED',
+                        'confidence': learned.confidence,
+                        'needs_review': False
+                    }
 
-        # Priority 2: Determine transaction type from keywords
+        # Priority 2: Determine transaction type from keywords and amount
+        # Check for payments/transfers first
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
             txn_type = 'TRANSFER'
             is_spend = False
@@ -455,28 +512,43 @@ class ImportService:
             is_spend = False
             is_income = False
             category = 'Transfers'
+        elif amount < 0:
+            # NEGATIVE AMOUNTS = Refunds/Credits = INCOME
+            # This includes merchant refunds, card benefit credits, returned purchases
+            txn_type = 'INCOME'
+            is_spend = False
+            is_income = True
+            # Try to categorize based on description
+            if any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
+                category = 'Refunds & Reimbursements'
+            elif any(keyword in description for keyword in ['CREDIT', 'REIMBURSEMENT', 'CASHBACK']):
+                category = 'Refunds & Reimbursements'
+            else:
+                # Use merchant-based category for better tracking
+                category = self._categorize_by_merchant(description)
+                if category == 'Other Expenses':
+                    category = 'Refunds & Reimbursements'
         elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
+            # Explicit refund keywords even with positive amount (edge case)
             txn_type = 'INCOME'
             is_spend = False
             is_income = True
             category = 'Refunds & Reimbursements'
-        elif any(keyword in description for keyword in ['LATE FEE', 'ANNUAL FEE', 'OVERDRAFT', 'INTEREST CHARGE']):
+        elif any(keyword in description for keyword in ['LATE FEE', 'ANNUAL FEE', 'OVERDRAFT', 'INTEREST CHARGE', 'MEMBERSHIP FEE']):
             txn_type = 'EXPENSE'
             is_spend = True
             is_income = False
             category = 'Service Charges/Fees'
         else:
-            # Default to UNCATEGORIZED
-            txn_type = 'UNCATEGORIZED'
-            is_spend = False
+            # Positive amount = EXPENSE
+            txn_type = 'EXPENSE'
+            is_spend = True
             is_income = False
 
             # Try to categorize by merchant patterns
             category = self._categorize_by_merchant(description)
-            if category:
-                # If we found a category, it's likely an expense
-                txn_type = 'EXPENSE'
-                is_spend = True
+            if not category:
+                category = 'Other Expenses'
 
         return {
             **txn_data,

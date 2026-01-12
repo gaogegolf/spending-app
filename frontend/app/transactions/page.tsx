@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
+import { formatDate, compareDates } from '@/lib/dateUtils';
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -274,10 +275,7 @@ export default function TransactionsPage() {
   }
 
   function formatDateDisplay(dateString: string): string {
-    if (!dateString) return '';
-    // Parse the date string as local date, not UTC
-    const [year, month, day] = dateString.split('-').map(Number);
-    return new Date(year, month - 1, day).toLocaleDateString();
+    return formatDate(dateString);
   }
 
   function calculateDisplayedTotal(): number {
@@ -339,7 +337,7 @@ export default function TransactionsPage() {
 
     switch (sortColumn) {
       case 'date':
-        comparison = new Date(a.date).getTime() - new Date(b.date).getTime();
+        comparison = compareDates(a.date, b.date);
         break;
       case 'description':
         const descA = (a.merchant_normalized || a.description_raw).toLowerCase();
@@ -806,7 +804,7 @@ export default function TransactionsPage() {
                       />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(transaction.date).toLocaleDateString()}
+                      {formatDateDisplay(transaction.date)}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
                       <div className="max-w-xs truncate" title={transaction.description_raw}>

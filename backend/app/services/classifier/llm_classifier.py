@@ -207,6 +207,9 @@ class LLMClassifier:
 
         Uses 4 transaction types: EXPENSE, INCOME, TRANSFER, UNCATEGORIZED
 
+        IMPORTANT: Negative amounts in credit card statements represent refunds/credits
+        and should be classified as INCOME, not EXPENSE.
+
         Args:
             transaction: Transaction dict
 
@@ -214,8 +217,9 @@ class LLMClassifier:
             Default classification
         """
         description = transaction.get('description_raw', '').upper()
+        amount = float(transaction.get('amount', 0))
 
-        # Try to detect type from keywords
+        # Priority 0: Check if this is a payment to the credit card (transfer)
         if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
             txn_type = 'TRANSFER'
             is_spend = False
@@ -231,7 +235,24 @@ class LLMClassifier:
             is_spend = False
             is_income = False
             category = 'Transfers'
+        elif amount < 0:
+            # NEGATIVE AMOUNTS = Refunds/Credits = INCOME
+            # This includes merchant refunds, card benefit credits, returned purchases
+            txn_type = 'INCOME'
+            is_spend = False
+            is_income = True
+            # Try to categorize based on description
+            if any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
+                category = 'Refunds & Reimbursements'
+            elif any(keyword in description for keyword in ['CREDIT', 'REIMBURSEMENT', 'CASHBACK']):
+                category = 'Refunds & Reimbursements'
+            else:
+                # Use merchant-based category for better tracking
+                category = self._categorize_by_merchant(description)
+                if category == 'Other Expenses':
+                    category = 'Refunds & Reimbursements'
         elif any(keyword in description for keyword in ['REFUND', 'RETURN', 'REVERSAL', 'MERCHANDISE/SERVICE RETURN']):
+            # Explicit refund keywords even with positive amount (edge case)
             txn_type = 'INCOME'
             is_spend = False
             is_income = True
@@ -242,6 +263,7 @@ class LLMClassifier:
             is_income = False
             category = 'Service Charges/Fees'
         else:
+            # Positive amount = EXPENSE
             txn_type = 'EXPENSE'
             is_spend = True
             is_income = False
