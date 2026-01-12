@@ -816,6 +816,7 @@ export default function TransactionsPage() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {editingCategoryId === transaction.id ? (
                         <select
+                          key={`category-${transaction.id}-${transaction.transaction_type}`}
                           autoFocus
                           disabled={savingCategory}
                           defaultValue={transaction.category || ''}
