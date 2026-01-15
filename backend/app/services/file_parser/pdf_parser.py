@@ -204,6 +204,8 @@ class PDFParser(BaseParser):
                 'Chase Savings',
                 'CHECKING SUMMARY',
                 'SAVINGS SUMMARY',
+                'JPMorgan Chase Bank, N.A.',
+                'JPMorgan Chase Bank',
             ]
 
             if any(indicator in first_page_text for indicator in chase_bank_indicators):
@@ -1964,10 +1966,8 @@ class PDFParser(BaseParser):
         row_index = 0
         in_transaction_section = False
 
-        # Pattern: MM/DD Description Amount Balance
-        # Amount can be negative (-55.00) or positive (0.39)
-        # Balance is always positive with optional $ sign
-        transaction_pattern = r'^(\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})$'
+        # Pattern to match the date at the start
+        date_pattern = r'^(\d{2}/\d{2})\s+'
 
         for i, line in enumerate(lines):
             line = line.strip()
@@ -1989,13 +1989,31 @@ class PDFParser(BaseParser):
             if not in_transaction_section:
                 continue
 
-            # Try to match transaction pattern
-            match = re.match(transaction_pattern, line)
-            if match:
-                date_str = match.group(1)
-                description = match.group(2).strip()
-                amount_str = match.group(3)
-                # balance_str = match.group(4)  # Not needed
+            # Check if line starts with a date
+            date_match = re.match(date_pattern, line)
+            if not date_match:
+                continue
+
+            date_str = date_match.group(1)
+            rest_of_line = line[date_match.end():]
+
+            # Find all money amounts in the rest of the line (numbers with .XX format)
+            # Amount can be negative (-55.00) or positive (0.39)
+            amounts = re.findall(r'-?[\d,]+\.\d{2}', rest_of_line)
+
+            if len(amounts) >= 2:
+                # findall returns amounts in order they appear in string
+                # So amounts[-2] is second-to-last (transaction amount)
+                # and amounts[-1] is last (balance)
+                amount_str = amounts[-2]
+
+                # Find position of the transaction amount to extract description
+                # Since findall preserves order, we find the first occurrence
+                amount_pos = rest_of_line.find(amount_str)
+                if amount_pos > 0:
+                    description = rest_of_line[:amount_pos].strip()
+                else:
+                    description = rest_of_line.strip()
 
                 txn = self._parse_chasebank_transaction_line(
                     date_str,

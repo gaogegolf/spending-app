@@ -198,6 +198,18 @@ export default function RulesPage() {
         await updateRule(editingRule.id, ruleData);
         closeModal();
         await loadRules();
+
+        // Check if there are existing transactions that match this updated rule
+        try {
+          const matchResult = await getRuleMatchCount(editingRule.id);
+          if (matchResult.match_count > 0) {
+            setApplyRuleId(editingRule.id);
+            setApplyMatchCount(matchResult.match_count);
+            setShowApplyPrompt(true);
+          }
+        } catch {
+          // Silently ignore if match count fails - rule was still updated
+        }
       } else {
         // Create new rule
         const newRule = await createRule(ruleData);
@@ -424,7 +436,7 @@ export default function RulesPage() {
           </div>
         </div>
       ) : (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className="bg-white shadow rounded-lg overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -505,15 +517,17 @@ export default function RulesPage() {
                     <div className="flex items-center justify-center gap-3">
                       <button
                         onClick={() => openEditModal(rule)}
-                        className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
+                        className="text-sm text-gray-400 hover:text-indigo-600"
+                        title="Edit rule"
                       >
-                        Edit
+                        📝
                       </button>
                       <button
                         onClick={() => handleDeleteClick(rule)}
-                        className="text-red-600 hover:text-red-800 text-sm font-medium"
+                        className="text-sm text-gray-400 hover:text-red-600"
+                        title="Delete rule"
                       >
-                        Delete
+                        🗑️
                       </button>
                     </div>
                   </td>

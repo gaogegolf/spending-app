@@ -30,6 +30,11 @@ export default function TransactionsPage() {
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
   const [savingType, setSavingType] = useState(false);
 
+  // Note editing state
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [noteValue, setNoteValue] = useState<string>('');
+  const [savingNote, setSavingNote] = useState(false);
+
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -275,6 +280,37 @@ export default function TransactionsPage() {
     } finally {
       setSavingType(false);
     }
+  }
+
+  async function handleNoteUpdate(transactionId: string) {
+    try {
+      setSavingNote(true);
+      setError(null);
+
+      await updateTransaction(transactionId, { user_note: noteValue });
+
+      // Update the transaction in local state
+      setTransactions(transactions.map(t =>
+        t.id === transactionId ? { ...t, user_note: noteValue } : t
+      ));
+
+      setEditingNoteId(null);
+      setNoteValue('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update note');
+    } finally {
+      setSavingNote(false);
+    }
+  }
+
+  function startEditingNote(transaction: Transaction) {
+    setEditingNoteId(transaction.id);
+    setNoteValue(transaction.user_note || '');
+  }
+
+  function cancelEditingNote() {
+    setEditingNoteId(null);
+    setNoteValue('');
   }
 
   function formatDateDisplay(dateString: string): string {
@@ -812,8 +848,37 @@ export default function TransactionsPage() {
                       {formatDateDisplay(transaction.date)}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="max-w-xs truncate" title={transaction.description_raw}>
-                        {transaction.merchant_normalized || transaction.description_raw}
+                      <div className="max-w-xs">
+                        <div className="truncate" title={transaction.description_raw}>
+                          {transaction.merchant_normalized || transaction.description_raw}
+                        </div>
+                        {editingNoteId === transaction.id ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            disabled={savingNote}
+                            value={noteValue}
+                            onChange={(e) => setNoteValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                handleNoteUpdate(transaction.id);
+                              } else if (e.key === 'Escape') {
+                                cancelEditingNote();
+                              }
+                            }}
+                            onBlur={() => handleNoteUpdate(transaction.id)}
+                            placeholder="Add note..."
+                            className="mt-1 w-full px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs"
+                          />
+                        ) : transaction.user_note ? (
+                          <div
+                            className="mt-1 text-xs text-gray-500 truncate cursor-pointer hover:text-indigo-600"
+                            title={transaction.user_note}
+                            onClick={() => startEditingNote(transaction)}
+                          >
+                            {transaction.user_note}
+                          </div>
+                        ) : null}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -881,13 +946,22 @@ export default function TransactionsPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <button
-                        onClick={() => handleDeleteClick(transaction.id)}
-                        className="text-red-600 hover:text-red-800 text-sm font-medium"
-                        title="Delete transaction"
-                      >
-                        Delete
-                      </button>
+                      <div className="flex items-center justify-center gap-3">
+                        <button
+                          onClick={() => startEditingNote(transaction)}
+                          className={`text-sm ${transaction.user_note ? 'text-indigo-600' : 'text-gray-400'} hover:text-indigo-800`}
+                          title={transaction.user_note || 'Add note'}
+                        >
+                          📝
+                        </button>
+                        <button
+                          onClick={() => handleDeleteClick(transaction.id)}
+                          className="text-sm text-gray-400 hover:text-red-600"
+                          title="Delete transaction"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
