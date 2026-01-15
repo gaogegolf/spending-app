@@ -292,9 +292,22 @@ class ImportService:
                         learned.times_applied += 1
                         amount = float(txn.get('amount', 0))
 
-                        # Negative amounts = INCOME (refunds/credits)
-                        # Positive amounts = EXPENSE
-                        if amount < 0:
+                        # Determine transaction type based on category
+                        # Transfer-related categories should always be TRANSFER type
+                        transfer_categories = ['Transfers', 'Credit Card Payments', 'Bank Transfer']
+                        if learned.category in transfer_categories:
+                            learned_txns.append({
+                                **txn,
+                                'transaction_type': 'TRANSFER',
+                                'category': learned.category,
+                                'is_spend': False,
+                                'is_income': False,
+                                'classification_method': 'LEARNED',
+                                'confidence': learned.confidence,
+                                'needs_review': False
+                            })
+                        elif amount < 0:
+                            # Negative amounts = INCOME (refunds/credits)
                             learned_txns.append({
                                 **txn,
                                 'transaction_type': 'INCOME',
@@ -306,6 +319,7 @@ class ImportService:
                                 'needs_review': False
                             })
                         else:
+                            # Positive amounts = EXPENSE
                             learned_txns.append({
                                 **txn,
                                 'transaction_type': 'EXPENSE',
@@ -320,28 +334,64 @@ class ImportService:
 
                 still_unmatched.append(txn)
 
-            # Step 4: Send remaining unmatched to LLM classifier
+            # Step 3.5: Handle is_payment and is_credit flags BEFORE LLM classification
+            # - is_payment=True: Credit card payments → TRANSFER
+            # - is_credit=True (for bank statements): Deposits → INCOME
+            payment_txns = []
+            income_txns = []
+            non_payment_txns = []
+            for txn in still_unmatched:
+                if txn.get('is_payment', False):
+                    # Use transfer_category if provided, otherwise default to Credit Card Payments
+                    category = txn.get('transfer_category') or 'Credit Card Payments'
+                    payment_txns.append({
+                        **txn,
+                        'transaction_type': 'TRANSFER',
+                        'category': category,
+                        'is_spend': False,
+                        'is_income': False,
+                        'classification_method': 'DEFAULT',
+                        'confidence': 0.9,
+                        'needs_review': False
+                    })
+                elif txn.get('is_credit', False) and float(txn.get('amount', 0)) < 0:
+                    # Credits (deposits) in bank statements should be INCOME
+                    # Negative amount + is_credit=True = money coming into account
+                    income_txns.append({
+                        **txn,
+                        'transaction_type': 'INCOME',
+                        'category': 'Paychecks/Salary',  # Default, may be refined by LLM
+                        'is_spend': False,
+                        'is_income': True,
+                        'classification_method': 'DEFAULT',
+                        'confidence': 0.7,
+                        'needs_review': False
+                    })
+                else:
+                    non_payment_txns.append(txn)
+
+            # Step 4: Send remaining unmatched (non-payment) to LLM classifier
             llm_classified_txns = []
 
-            if still_unmatched and settings.ENABLE_LLM_CLASSIFICATION:
-                classified_results = self.llm_classifier.classify_batch(still_unmatched)
+            if non_payment_txns and settings.ENABLE_LLM_CLASSIFICATION:
+                classified_results = self.llm_classifier.classify_batch(non_payment_txns)
                 # CRITICAL: Merge classification results with original transaction data
                 # The LLM classifier only returns classification fields, not the original
                 # transaction data (date, amount, row_index, etc.)
                 for j, classification in enumerate(classified_results):
-                    if j < len(still_unmatched):
-                        llm_classified_txns.append({**still_unmatched[j], **classification})
+                    if j < len(non_payment_txns):
+                        llm_classified_txns.append({**non_payment_txns[j], **classification})
                     else:
                         llm_classified_txns.append(classification)
             else:
                 # If LLM disabled, use default classification
                 # Also merge with original transaction data
                 llm_classified_txns = [
-                    {**txn, **self._default_classification(txn)} for txn in still_unmatched
+                    {**txn, **self._default_classification(txn)} for txn in non_payment_txns
                 ]
 
             # Step 5: Merge all classified transactions and insert
-            all_classified = rule_matched_txns + learned_txns + llm_classified_txns
+            all_classified = rule_matched_txns + learned_txns + payment_txns + income_txns + llm_classified_txns
 
             successfully_inserted = 0
             duplicate_count = 0
@@ -383,6 +433,8 @@ class ImportService:
                 merged_data.pop('is_payment', None)  # Used for classification only
                 merged_data.pop('row_index', None)  # Used for deduplication only, not stored
                 merged_data.pop('metadata', None)  # CSV metadata, not directly stored
+                merged_data.pop('account_type', None)  # Ally Bank account type (spending/savings)
+                merged_data.pop('transfer_category', None)  # Used for category selection only
 
                 # Convert date from string to date object if needed
                 if 'date' in merged_data and isinstance(merged_data['date'], str):

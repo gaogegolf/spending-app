@@ -58,6 +58,9 @@ class PDFParser(BaseParser):
             if self.statement_format == 'capitalone':
                 return self._parse_capitalone_statement()
 
+            if self.statement_format == 'allybank':
+                return self._parse_allybank_statement()
+
             # Default: Try Fidelity format
             # Extract all tables from all pages
             self.tables = self.extract_tables()
@@ -177,6 +180,17 @@ class PDFParser(BaseParser):
 
             if not first_page_text:
                 return 'unknown'
+
+            # Check for Ally Bank indicators
+            ally_indicators = [
+                'Ally Bank',
+                'ally.com',
+                'Ally Bank Member FDIC',
+                'Spending Account',
+            ]
+
+            if any(indicator in first_page_text for indicator in ally_indicators):
+                return 'allybank'
 
             # Check for Capital One indicators
             capitalone_indicators = [
@@ -1456,6 +1470,373 @@ class PDFParser(BaseParser):
             cleaned = cleaned.title()
 
         return cleaned.strip()
+
+    def _parse_allybank_statement(self) -> ParseResult:
+        """Parse Ally Bank statement.
+
+        Ally Bank statements have text-based transaction format with multiple accounts:
+        - Spending Account section
+        - Savings Account section
+        - Format: MM/DD/YYYY Description Credits Debits Balance
+
+        Returns:
+            ParseResult with transactions from all accounts
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Parse transactions from text
+            transactions = self._extract_allybank_transactions(all_text)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Ally Bank statement"],
+                    warnings=warnings,
+                    metadata={'format': 'allybank'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'allybank',
+                }
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Ally Bank statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'allybank'}
+            )
+
+    def _extract_allybank_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from Ally Bank statement text.
+
+        Ally Bank transaction format:
+        - Date Description Credits Debits Balance
+        - Date format: MM/DD/YYYY (full year included)
+        - Credits: deposits, interest (positive values)
+        - Debits: withdrawals (shown with - prefix)
+        - Multi-line descriptions common
+
+        Example lines:
+        12/29/2025 ACH Withdrawal $0.00 -$1,664.99 $18,740.01
+        AMEX EPAYMENT ACH PMT
+        01/05/2026 Interest Paid $4.16 -$0.00 $15,894.17
+
+        Args:
+            text: Full text of the Ally Bank statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        in_activity_section = False
+        current_account_type = None
+
+        # Pattern for Ally Bank transactions:
+        # MM/DD/YYYY Description $Credits -$Debits $Balance
+        # Credits and Debits use $0.00 when no value
+        transaction_pattern = r'^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+\$?([\d,]+\.\d{2})\s+-?\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})$'
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Detect account type sections
+            if 'Spending Account' in line:
+                current_account_type = 'spending'
+                in_activity_section = False
+            elif 'Savings Account' in line:
+                current_account_type = 'savings'
+                in_activity_section = False
+
+            # Detect Activity section start
+            if line == 'Activity' or 'Date Description' in line:
+                in_activity_section = True
+                i += 1
+                continue
+
+            # End of activity section markers
+            if any(marker in line for marker in [
+                'Ending Balance',
+                'Interest Paid YTD',
+                'Interest Withheld YTD',
+                'Important Information',
+                'Sincerely,',
+            ]):
+                in_activity_section = False
+                i += 1
+                continue
+
+            if not in_activity_section:
+                i += 1
+                continue
+
+            # Skip header line
+            if 'Credits' in line and 'Debits' in line:
+                i += 1
+                continue
+
+            # Skip empty lines
+            if not line:
+                i += 1
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                date_str = match.group(1)
+                description = match.group(2).strip()
+                credits_str = match.group(3)
+                debits_str = match.group(4)
+
+                # Look ahead for multi-line description
+                j = i + 1
+                while j < len(lines) and j < i + 4:
+                    next_line = lines[j].strip()
+                    # Stop if we hit another transaction or end markers
+                    if not next_line:
+                        j += 1
+                        continue
+                    if re.match(r'^\d{2}/\d{2}/\d{4}', next_line):
+                        break
+                    if any(marker in next_line for marker in ['Ending Balance', 'Activity', 'Account']):
+                        break
+                    # This is a description continuation
+                    description = f"{description} {next_line}"
+                    j += 1
+
+                txn = self._parse_allybank_transaction_line(
+                    date_str,
+                    description,
+                    credits_str,
+                    debits_str,
+                    current_account_type
+                )
+
+                if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
+                    transactions.append(txn)
+
+                i = j
+                continue
+
+            i += 1
+
+        return transactions
+
+    def _parse_allybank_transaction_line(self, date_str: str, description: str,
+                                          credits_str: str, debits_str: str,
+                                          account_type: str) -> Optional[Dict[str, Any]]:
+        """Parse a single Ally Bank transaction line.
+
+        Args:
+            date_str: Date string in MM/DD/YYYY format
+            description: Transaction description
+            credits_str: Credits amount string (0.00 if no credit)
+            debits_str: Debits amount string (0.00 if no debit)
+            account_type: 'spending' or 'savings'
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Parse date (MM/DD/YYYY format - full year included)
+            month, day, year = date_str.split('/')
+            parsed_date = datetime(int(year), int(month), int(day)).date()
+
+            # Parse amounts
+            credit_amount = float(credits_str.replace(',', ''))
+            debit_amount = float(debits_str.replace(',', ''))
+
+            # Determine amount and direction for spending tracking convention:
+            # - Debits (money OUT of bank) = positive amount (expense/transfer)
+            # - Credits (money IN to bank) = negative amount (income)
+            if debit_amount > 0:
+                # This is a debit (withdrawal) - money leaving the account
+                amount = debit_amount  # Positive = expense/outflow
+                is_credit = False
+            else:
+                # This is a credit (deposit) - money entering the account
+                amount = -credit_amount  # Negative = income/inflow
+                is_credit = True
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_allybank_merchant(description)
+
+            # Determine if this is a payment/transfer (credit card or bank transfer)
+            # These should be classified as TRANSFER, not EXPENSE
+            desc_upper = description.upper()
+
+            # Credit card payment keywords
+            cc_payment_keywords = [
+                'CREDIT CARD', 'CREDIT CRD', 'EPAYMENT', 'AUTOPAY', 'AUTO PAY',
+                'WF CREDIT', 'CHASE CREDIT', 'AMEX', 'CAPITAL ONE', 'CITI CARD',
+                'DISCOVER', 'BARCLAYS',
+            ]
+
+            # Bank-to-bank transfer keywords
+            bank_transfer_keywords = [
+                'EXT TRNSFR', 'EXTERNAL TRANSFER', 'BANK TRANSFER', 'WIRE TRANSFER',
+                'JPMORGAN CHASE', 'FIDELITY', 'SCHWAB', 'VANGUARD', 'MONEYLINE',
+                'FID BKG SVC',  # Fidelity transfers
+            ]
+
+            is_cc_payment = any(kw in desc_upper for kw in cc_payment_keywords) and debit_amount > 0
+            is_bank_transfer = any(kw in desc_upper for kw in bank_transfer_keywords) and debit_amount > 0
+            is_payment = is_cc_payment or is_bank_transfer
+            transfer_category = 'Credit Card Payments' if is_cc_payment else 'Transfers' if is_bank_transfer else None
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': amount,  # Positive for debits (outflow), negative for credits (inflow)
+                'is_payment': is_payment,
+                'is_credit': is_credit,  # True for deposits, False for withdrawals
+                'transfer_category': transfer_category,  # 'Credit Card Payments' or 'Transfers'
+                'currency': 'USD',
+                'account_type': account_type,  # 'spending' or 'savings'
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Ally Bank line: {date_str} {description}, error: {e}")
+            return None
+
+    def _clean_allybank_merchant(self, description: str) -> str:
+        """Clean Ally Bank merchant description.
+
+        Ally Bank format examples:
+        - "Direct Deposit META PLATFORMS I BDUCVUF9SL ISA¦00¦¦ZZ..." -> "Meta Platforms"
+        - "ACH Withdrawal AMEX EPAYMENT ACH PMT" -> "Amex Epayment"
+        - "ACH Withdrawal WF Credit Card AUTO PAY" -> "WF Credit Card"
+        - "Interest Paid" -> "Interest"
+
+        Args:
+            description: Raw transaction description
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Handle "Interest Paid" as special case (check before removing prefixes)
+        if 'Interest Paid' in description or 'I nterest Paid' in description:
+            return 'Interest'
+
+        # Remove transaction type prefixes
+        prefixes = [
+            r'^Direct Deposit\s+',
+            r'^ACH Withdrawal\s+',
+            r'^ACH Deposit\s+',
+            r'^Interest Paid\s*',
+            r'^Wire Transfer\s+',
+            r'^ATM Withdrawal\s+',
+        ]
+        for prefix in prefixes:
+            cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
+
+        # Remove everything after certain markers that indicate continuation text
+        cleaned = re.sub(r'\s+Ally Bank Member FDIC.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+Transaction Proceeds.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+OPTUMCLAIM.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+EquatePlus.*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove reference codes with pipe characters (¦)
+        cleaned = re.sub(r'\s*¦[^¦]*¦[^¦]*¦.*$', '', cleaned)
+        cleaned = re.sub(r'\s*ISA¦.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+ISA\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove "Future Amount:" and tilde annotations
+        cleaned = re.sub(r'\s*~.*$', '', cleaned)
+        cleaned = re.sub(r'\s*Future Amount:.*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove trailing reference codes (like DDIR, PAYMENTS~, etc.)
+        cleaned = re.sub(r'\s+PAYMENTS~?.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+PAYROLL.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+AUTOPAY.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+AUTO PAY.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+DDIR\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+ACH PMT\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+PAYMENT\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove alphanumeric reference codes (mixed letters+numbers like BDUCVUF9SL, E37853Ff07C8103)
+        # Only remove if it contains BOTH letters AND numbers (true reference codes)
+        # Don't remove pure letter words like "TRANSAMERICA" or "INSPAYMENT"
+        cleaned = re.sub(r'\s+[A-Za-z]+\d+[A-Za-z0-9]*\s*', ' ', cleaned)  # Must have letter then digit
+        cleaned = re.sub(r'\s+\d+[A-Za-z]+[A-Za-z0-9]*\s*', ' ', cleaned)  # Must have digit then letter
+        cleaned = re.sub(r'^[A-Za-z]+\d+[A-Za-z0-9]*\s+', '', cleaned)  # At start of string
+        # Remove all instances of WORD* pattern (like BRGHTWHL*)
+        cleaned = re.sub(r'\b[A-Z]{4,}\*\s*', '', cleaned)
+        cleaned = re.sub(r'\s+[A-Z]+\*.*$', '', cleaned)
+
+        # Clean up ACH/Ach Pmt patterns
+        cleaned = re.sub(r'\s+Ach Pmt\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+ACH PMT\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Clean up wire transfer descriptions
+        cleaned = re.sub(r'\s+FROM:.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+FED REF ID:.*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'^Incoming Wire\s*', 'Wire Transfer ', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'^Outgoing Wire\s*', 'Wire Transfer ', cleaned, flags=re.IGNORECASE)
+
+        # Remove trailing asterisks and other punctuation
+        cleaned = re.sub(r'\s*\*+\s*$', '', cleaned)
+
+        # Remove long numeric codes
+        cleaned = re.sub(r'\b\d{8,}\b', '', cleaned)
+
+        # Remove duplicate words (like "BRGHTWHL* BRGHTWHL*")
+        words = cleaned.split()
+        seen = set()
+        unique_words = []
+        for word in words:
+            word_lower = word.lower().strip('*')
+            if word_lower not in seen:
+                seen.add(word_lower)
+                unique_words.append(word)
+        cleaned = ' '.join(unique_words)
+
+        # Remove common suffixes
+        cleaned = re.sub(r'\s+Inc\.?\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+LLC\.?\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+N\.?A\.?\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r',\s*$', '', cleaned)
+
+        # Remove trailing single letters or short codes
+        cleaned = re.sub(r'\s+[A-Z]{1,2}\s*$', '', cleaned)
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        # Title case for cleaner display (only if all uppercase)
+        if cleaned.isupper() and len(cleaned) > 2:
+            cleaned = cleaned.title()
+
+        return cleaned.strip() if cleaned else description
 
     def _extract_statement_year(self) -> int:
         """Extract statement year from PDF header.
