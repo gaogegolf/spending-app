@@ -78,6 +78,41 @@ def get_yearly_summary(
         )
 
 
+@router.get("/stats/date-range")
+def get_date_range_summary(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    account_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Get spending and income summary for a custom date range.
+
+    Args:
+        start_date: Start date (inclusive)
+        end_date: End date (inclusive)
+        account_id: Optional account ID to filter by
+        db: Database session
+
+    Returns:
+        Summary with spending, income, net, and category breakdown for the date range
+    """
+    stats_service = StatsService(db)
+
+    try:
+        summary = stats_service.get_date_range_summary(
+            start_date=start_date,
+            end_date=end_date,
+            account_id=account_id
+        )
+        return summary
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to calculate date range summary: {str(e)}"
+        )
+
+
 @router.get("/stats/category-breakdown")
 def get_category_breakdown(
     start_date: date = Query(...),

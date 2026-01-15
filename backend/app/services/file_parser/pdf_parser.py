@@ -1,4 +1,4 @@
-"""PDF file parser with support for Fidelity and American Express formats."""
+"""PDF file parser with support for Fidelity, American Express, and Chase formats."""
 
 import pdfplumber
 import pandas as pd
@@ -15,6 +15,7 @@ class PDFParser(BaseParser):
     Supports:
     - Fidelity Visa statements (two-table format)
     - American Express statements (text-based format)
+    - Chase credit card statements (text-based format)
     """
 
     def __init__(self, file_path: str):
@@ -47,6 +48,15 @@ class PDFParser(BaseParser):
             # Route to appropriate parser based on format
             if self.statement_format == 'amex':
                 return self._parse_amex_statement()
+
+            if self.statement_format == 'chase':
+                return self._parse_chase_statement()
+
+            if self.statement_format == 'wellsfargo':
+                return self._parse_wellsfargo_statement()
+
+            if self.statement_format == 'capitalone':
+                return self._parse_capitalone_statement()
 
             # Default: Try Fidelity format
             # Extract all tables from all pages
@@ -155,7 +165,8 @@ class PDFParser(BaseParser):
         """Detect the statement format based on PDF content.
 
         Returns:
-            'amex' for American Express, 'fidelity' for Fidelity, 'unknown' otherwise
+            'amex' for American Express, 'chase' for Chase, 'wellsfargo' for Wells Fargo,
+            'fidelity' for Fidelity, 'unknown' otherwise
         """
         try:
             if not self.pdf or len(self.pdf.pages) == 0:
@@ -166,6 +177,45 @@ class PDFParser(BaseParser):
 
             if not first_page_text:
                 return 'unknown'
+
+            # Check for Capital One indicators
+            capitalone_indicators = [
+                'Capital One',
+                'capitalone.com',
+                'Venture X Card',
+                'Venture Card',
+                'Quicksilver',
+                'Savor Card',
+            ]
+
+            if any(indicator in first_page_text for indicator in capitalone_indicators):
+                return 'capitalone'
+
+            # Check for Wells Fargo indicators
+            wellsfargo_indicators = [
+                'Wells Fargo',
+                'wellsfargo.com',
+                'Wells Fargo Online',
+                'Bilt Rewards',
+                'BiltProtect',
+            ]
+
+            if any(indicator in first_page_text for indicator in wellsfargo_indicators):
+                return 'wellsfargo'
+
+            # Check for Chase indicators
+            chase_indicators = [
+                'chase.com',
+                'Chase Mobile',
+                'CHASE CREDIT CARDS',
+                'JPMorgan Chase',
+                'PRIME VISA',
+                'Chase Sapphire',
+                'Chase Freedom',
+            ]
+
+            if any(indicator in first_page_text for indicator in chase_indicators):
+                return 'chase'
 
             # Check for American Express indicators
             amex_indicators = [
@@ -501,12 +551,919 @@ class PDFParser(BaseParser):
 
         return cleaned.strip()
 
+    def _parse_chase_statement(self) -> ParseResult:
+        """Parse Chase credit card statement.
+
+        Chase statements have text-based transaction format:
+        - ACCOUNT ACTIVITY section
+        - PAYMENTS AND OTHER CREDITS with negative amounts
+        - PURCHASE section with positive amounts
+
+        Returns:
+            ParseResult with transactions
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Parse transactions from text
+            transactions = self._extract_chase_transactions(all_text)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Chase statement"],
+                    warnings=warnings,
+                    metadata={'format': 'chase'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'chase',
+                }
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Chase statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'chase'}
+            )
+
+    def _extract_chase_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from Chase statement text.
+
+        Chase transaction format:
+        - Date: MM/DD
+        - Description: Merchant name and details
+        - Amount: Positive for purchases, negative with - prefix for credits
+
+        Example lines:
+        01/21 AUTOMATIC PAYMENT - THANK YOU -2,638.72
+        12/29 Amazon.com*ZP5F00VD2 Amzn.com/bill WA 44.94
+
+        Args:
+            text: Full text of the Chase statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        current_section = None
+
+        # Pattern for Chase transactions: MM/DD DESCRIPTION AMOUNT
+        # Amount can be negative (with -) or positive
+        # Note: Chase uses MM/DD format without year
+        transaction_pattern = r'^(\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})$'
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Detect section headers (Chase PDFs sometimes have doubled characters)
+            # "PAYMENTS AND OTHER CREDITS" marks credits section
+            if 'PAYMENTS AND OTHER CREDITS' in line.upper():
+                current_section = 'credits'
+                i += 1
+                continue
+
+            # "PURCHASE" or "PURCHASES" marks purchases section
+            if line.upper() in ['PURCHASE', 'PURCHASES']:
+                current_section = 'purchases'
+                i += 1
+                continue
+
+            # Skip empty lines
+            if not line:
+                i += 1
+                continue
+
+            # Skip known non-transaction lines
+            skip_patterns = [
+                'Date of', 'Transaction', 'Merchant Name',
+                '$ Amount', 'ACCOUNT ACTIVITY', 'ACCOUNT SUMMARY',
+                'Order Number', 'Year-to-Date', 'Total fees',
+                'Total interest', 'INTEREST CHARGES', 'Annual Percentage',
+                'Balance Type', 'Balance Subject', 'Days in Billing',
+                'Page', 'Statement Date', 'www.chase.com', 'chase.com',
+                'Customer Service', '2025 Totals', '2024 Totals',
+                'AACCCCOOUUNNTT', 'IINNTTEERREESSTT', 'YYeeaarr'  # Doubled character patterns
+            ]
+
+            if any(skip in line for skip in skip_patterns):
+                i += 1
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                date_str = match.group(1)
+                description = match.group(2).strip()
+                amount_str = match.group(3).strip()
+
+                txn = self._parse_chase_transaction_line(
+                    date_str,
+                    description,
+                    amount_str,
+                    current_section
+                )
+
+                if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
+                    transactions.append(txn)
+
+            i += 1
+
+        return transactions
+
+    def _parse_chase_transaction_line(self, date_str: str, description: str,
+                                       amount_str: str, section: str) -> Optional[Dict[str, Any]]:
+        """Parse a single Chase transaction line.
+
+        Args:
+            date_str: Date string in MM/DD format
+            description: Transaction description
+            amount_str: Amount string (negative with - for credits)
+            section: Current section of the statement
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Parse date (MM/DD format - need to add year)
+            month, day = map(int, date_str.split('/'))
+            year = self.statement_year if self.statement_year else datetime.now().year
+
+            # Handle year boundary for Chase statements:
+            # If transaction month is much later than expected for a statement
+            # (e.g., December transaction in a February statement),
+            # the transaction is from the previous year
+            # Heuristic: if transaction month > 10 and we're early in the year (Jan-Mar),
+            # the transaction is from the previous year
+            if month >= 10 and self._get_statement_month() <= 3:
+                year -= 1
+
+            try:
+                parsed_date = datetime(year, month, day).date()
+            except ValueError:
+                # Invalid date, skip
+                return None
+
+            # Parse amount
+            amount = float(amount_str.replace(',', ''))
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_chase_merchant(description)
+
+            # Determine if this is a payment (transfer)
+            is_payment = 'AUTOMATIC PAYMENT' in description.upper() or \
+                         ('PAYMENT' in description.upper() and 'THANK YOU' in description.upper())
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': amount,  # Negative for credits, positive for purchases
+                'is_payment': is_payment,
+                'currency': 'USD',
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Chase line: {date_str} {description} {amount_str}, error: {e}")
+            return None
+
+    def _get_statement_month(self) -> int:
+        """Get the statement month from PDF header.
+
+        Returns:
+            Statement month (1-12), defaults to current month if not found
+        """
+        try:
+            if not self.pdf or len(self.pdf.pages) == 0:
+                return datetime.now().month
+
+            first_page_text = self.pdf.pages[0].extract_text()
+            if not first_page_text:
+                return datetime.now().month
+
+            # Look for "Statement Closing Date MM/DD/YYYY" pattern (Wells Fargo)
+            wellsfargo_match = re.search(r'Statement Closing Date\s+(\d{2})/\d{2}/\d{4}', first_page_text)
+            if wellsfargo_match:
+                return int(wellsfargo_match.group(1))
+
+            # Look for Capital One billing cycle pattern: "Mon DD, YYYY - Mon DD, YYYY"
+            # The second date is the statement closing date
+            capitalone_match = re.search(
+                r'([A-Z][a-z]{2})\s+\d{1,2},\s+\d{4}\s*-\s*([A-Z][a-z]{2})\s+\d{1,2},\s+(\d{4})',
+                first_page_text
+            )
+            if capitalone_match:
+                month_abbr_map = {
+                    'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+                }
+                end_month = capitalone_match.group(2)
+                if end_month in month_abbr_map:
+                    return month_abbr_map[end_month]
+
+            # Look for "Month YYYY" pattern (Chase and others)
+            months = ['January', 'February', 'March', 'April', 'May', 'June',
+                      'July', 'August', 'September', 'October', 'November', 'December']
+
+            for i, month_name in enumerate(months, 1):
+                if re.search(rf'{month_name}\s+\d{{4}}', first_page_text):
+                    return i
+
+            return datetime.now().month
+
+        except Exception:
+            return datetime.now().month
+
+    def _clean_chase_merchant(self, description: str) -> str:
+        """Clean Chase merchant description.
+
+        Chase format examples:
+        - "Amazon.com*ZP5F00VD2 Amzn.com/bill WA" -> "Amazon"
+        - "AUTOMATIC PAYMENT - THANK YOU" -> "AUTOMATIC PAYMENT - THANK YOU"
+        - "Whole Foods LAT 10155 866-216-1072 DE" -> "Whole Foods LAT 10155"
+
+        Args:
+            description: Raw transaction description
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Remove Amazon order codes (like *ZP5F00VD2) but keep the merchant name
+        cleaned = re.sub(r'\*[A-Z0-9]+', '', cleaned)
+
+        # Remove URL paths (like Amzn.com/bill) - the secondary URL after merchant
+        cleaned = re.sub(r'\s+\S+\.com/\S*', '', cleaned)
+
+        # Remove phone numbers (like 866-216-1072)
+        cleaned = re.sub(r'\b\d{3}-\d{3}-\d{4}\b', '', cleaned)
+        cleaned = re.sub(r'\b\d{10,}\b', '', cleaned)
+
+        # Remove state codes at the end (2-letter codes)
+        cleaned = re.sub(r'\s+[A-Z]{2}\s*$', '', cleaned)
+
+        # Clean up .com from merchant names (Amazon.com -> Amazon)
+        cleaned = re.sub(r'\.com\b', '', cleaned)
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        return cleaned.strip()
+
+    def _parse_wellsfargo_statement(self) -> ParseResult:
+        """Parse Wells Fargo credit card statement.
+
+        Wells Fargo statements have text-based transaction format:
+        - Transaction Summary section
+        - Format: Trans Date Post Date Reference Number Description Amount
+
+        Returns:
+            ParseResult with transactions
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Parse transactions from text
+            transactions = self._extract_wellsfargo_transactions(all_text)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Wells Fargo statement"],
+                    warnings=warnings,
+                    metadata={'format': 'wellsfargo'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'wellsfargo',
+                }
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Wells Fargo statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'wellsfargo'}
+            )
+
+    def _extract_wellsfargo_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from Wells Fargo statement text.
+
+        Wells Fargo transaction format:
+        - Trans Date Post Date Reference Number Description Amount
+        - Credits have trailing '-' after amount (e.g., $3,319.99-)
+
+        Example lines:
+        12/09 12/09 860001800 5543286P861K5WPZ7 AMAZON.COM*ZR2WX97H0 AMZN.COM/BILL WA $25.00
+        10/01 10/01 F2290008J00CHGDDA AUTOMATIC PAYMENT - THANK YOU $3,319.99-
+
+        Args:
+            text: Full text of the Wells Fargo statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        in_transaction_section = False
+
+        # Pattern for Wells Fargo transactions:
+        # MM/DD MM/DD REFERENCE1 [REFERENCE2] DESCRIPTION $AMOUNT[-]
+        # There can be one or two reference numbers (alphanumeric)
+        # Pattern captures: date, date, refs+description, amount, credit flag
+        transaction_pattern = r'^(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(.+?)\s+\$?([\d,]+\.\d{2})(-)?$'
+
+        for line in lines:
+            line = line.strip()
+
+            # Detect start of transaction section
+            if 'Transaction Summary' in line:
+                in_transaction_section = True
+                continue
+
+            # Skip header line
+            if 'Trans Date' in line and 'Post Date' in line:
+                continue
+
+            # End of transaction section markers
+            if any(marker in line for marker in [
+                'Interest Charge Calculation',
+                'BiltProtect Summary',
+                'NOTICE: SEE REVERSE',
+                'PAGE',
+                'Interest Charge',
+            ]):
+                # Don't break, there might be more transactions on next pages
+                continue
+
+            if not in_transaction_section:
+                continue
+
+            # Skip empty lines and non-transaction content
+            if not line or line.startswith('Continued'):
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                trans_date = match.group(1)
+                post_date = match.group(2)
+                description = match.group(3).strip()  # Contains refs + description
+                amount_str = match.group(4)
+                is_credit = match.group(5) == '-'
+
+                txn = self._parse_wellsfargo_transaction_line(
+                    post_date,
+                    description,
+                    amount_str,
+                    is_credit
+                )
+
+                if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
+                    transactions.append(txn)
+
+        return transactions
+
+    def _parse_wellsfargo_transaction_line(self, date_str: str, description: str,
+                                            amount_str: str, is_credit: bool) -> Optional[Dict[str, Any]]:
+        """Parse a single Wells Fargo transaction line.
+
+        Args:
+            date_str: Date string in MM/DD format
+            description: Transaction description
+            amount_str: Amount string (without $ or -)
+            is_credit: Whether this is a credit (has trailing -)
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Parse date (MM/DD format - need to add year)
+            month, day = map(int, date_str.split('/'))
+            year = self.statement_year if self.statement_year else datetime.now().year
+
+            # Handle year boundary: if transaction month > statement month by a lot,
+            # the transaction is from the previous year
+            if month >= 10 and self._get_statement_month() <= 3:
+                year -= 1
+
+            try:
+                parsed_date = datetime(year, month, day).date()
+            except ValueError:
+                return None
+
+            # Parse amount - credits are negative
+            amount = float(amount_str.replace(',', ''))
+            if is_credit:
+                amount = -amount
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_wellsfargo_merchant(description)
+
+            # Determine if this is a payment (transfer)
+            is_payment = 'AUTOMATIC PAYMENT' in description.upper() or \
+                         ('PAYMENT' in description.upper() and 'THANK YOU' in description.upper())
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': amount,
+                'is_payment': is_payment,
+                'currency': 'USD',
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Wells Fargo line: {date_str} {description} {amount_str}, error: {e}")
+            return None
+
+    def _clean_wellsfargo_merchant(self, description: str) -> str:
+        """Clean Wells Fargo merchant description.
+
+        Wells Fargo format examples:
+        - "860001800 5543286P861K5WPZ7 AMAZON.COM*ZR2WX97H0 AMZN.COM/BILL WA" -> "Amazon"
+        - "PANERA BREAD #204485 O 650-968-2066 CA" -> "Panera Bread"
+        - "TST*UDON MUGIZO - MOUN MOUNTAIN VIEW CA" -> "Udon Mugizo"
+        - "BPS*BILT REWARDS B NEW YORK NY" -> "Bilt Rewards"
+
+        Args:
+            description: Raw transaction description (may include reference codes)
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Remove reference codes at the start
+        # Pattern 1: Numeric reference (like 860001800)
+        cleaned = re.sub(r'^\d{9,}\s+', '', cleaned)
+        # Pattern 2: Alphanumeric reference (like 5543286P861K5WPZ7 or F2290008J00CHGDDA)
+        cleaned = re.sub(r'^[A-Z0-9]{14,}\s+', '', cleaned)
+        # Try again in case there are two reference codes
+        cleaned = re.sub(r'^[A-Z0-9]{14,}\s+', '', cleaned)
+
+        # Remove common prefixes (case-insensitive)
+        prefix_patterns = [
+            (r'^TST\*\s*', ''),
+            (r'^SQ\s*\*\s*', ''),
+            (r'^BPS\*\s*', ''),
+            (r'^GDP\*\s*', ''),
+            (r'^DD\s*\*?\s*', ''),
+            (r'^OX9\s+', ''),
+            (r'^UBER\s*\*\s*', 'UBER '),
+        ]
+        for pattern, replacement in prefix_patterns:
+            cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+        # Remove Amazon order codes (like *ZR2WX97H0)
+        cleaned = re.sub(r'\*[A-Z0-9]+', '', cleaned)
+
+        # Remove URL paths (like AMZN.COM/BILL)
+        cleaned = re.sub(r'\s*\S+\.COM/\S*', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove .COM from merchant names
+        cleaned = re.sub(r'\.COM\b', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove phone numbers
+        cleaned = re.sub(r'\b\d{3}-?\d{3}-?\d{4}\b', '', cleaned)
+        cleaned = re.sub(r'\b\d{10,}\b', '', cleaned)
+
+        # Remove store numbers (like #204485)
+        cleaned = re.sub(r'#\d+', '', cleaned)
+
+        # Remove "Store" followed by numbers (like "Store 00618")
+        cleaned = re.sub(r'\s+Store\s+\d+', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove Spotify/other service reference codes (like P383C56Bcb)
+        cleaned = re.sub(r'\s+P[0-9A-Fa-f]{8,}', '', cleaned)
+
+        # Remove "Ll" or "LLC" patterns (like "Kiddo's Chu Chu Ll")
+        cleaned = re.sub(r'\s+LL[C]?\s+', ' ', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+LL[C]?\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove truncated location patterns (like "- MOUN")
+        # This must happen BEFORE city/state removal
+        # Exclude common words that should be kept (like "THANK")
+        def remove_truncated_location(match):
+            word = match.group(1).upper()
+            # Keep these words, they're not truncated locations
+            keep_words = {'THANK', 'DRIVE', 'THRU', 'PICK', 'STORE', 'ONLINE'}
+            if word in keep_words:
+                return match.group(0)  # Keep original
+            return ' '
+        cleaned = re.sub(r'\s+-\s+([A-Z]{3,6})\s+', remove_truncated_location, cleaned, flags=re.IGNORECASE)
+
+        # Remove common city names that appear in Wells Fargo statements
+        # Multi-word cities must be handled explicitly
+        # IMPORTANT: Longer city names must come first to avoid partial matches
+        common_cities = [
+            'EAST PALO ALTO',     # Must come before 'EAST PALO' and 'PALO ALTO'
+            'MOUNTAIN VIEW', 'SAN FRANCISCO', 'SAN JOSE', 'SAN MATEO',
+            'NEW YORK', 'LOS ANGELES', 'PALO ALTO', 'MENLO PARK',
+            'REDWOOD CITY', 'SUNNYVALE', 'SANTA CLARA', 'CUPERTINO',
+            'FOSTER CITY', 'BURLINGAME', 'SAN CARLOS', 'BELMONT',
+            'EAST PALO',          # Truncated version (after full version)
+        ]
+        for city in common_cities:
+            cleaned = re.sub(rf'\s+{city}\s+[A-Z]{{2}}\s*$', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(rf'\s+{city}\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove single-word city + state patterns at the end (like "BEACHWOOD OH")
+        # Pattern matches: WORD STATE where STATE is 2 letters
+        cleaned = re.sub(r'\s+[A-Z]+\s+[A-Z]{2}\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove single letter/code before city that got left behind (like "B" in "B NEW YORK")
+        cleaned = re.sub(r'\s+[A-Z]{1}\s*$', '', cleaned)
+
+        # Remove trailing state code alone
+        cleaned = re.sub(r'\s+[A-Z]{2}\s*$', '', cleaned)
+
+        # Remove trailing "O" (common in Wells Fargo as a code)
+        cleaned = re.sub(r'\s+O\s*$', '', cleaned)
+
+        # Remove short alphanumeric codes at end (like F1528 in McDonald's F1528)
+        # This must happen AFTER city/state removal
+        cleaned = re.sub(r'\s+[A-Z]\d{3,5}\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove truncated common words at end (Company->Compan, Mountain->Mountai, etc.)
+        truncated_patterns = [
+            r'\s+Compan\s*$',      # Company
+            r'\s+Mountai\s*$',     # Mountain
+            r'\s+Mountain\s*$',    # Full word when it's city name remnant
+            r'\s+Insuranc\s*$',    # Insurance
+        ]
+        for pattern in truncated_patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+
+        # Remove trailing numbers (like "3" in "Cafe3")
+        cleaned = re.sub(r'(\w)\d+\s*$', r'\1', cleaned)
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        # Title case for cleaner display (only if all uppercase)
+        if cleaned.isupper() and len(cleaned) > 2:
+            cleaned = cleaned.title()
+
+        return cleaned.strip()
+
+    def _parse_capitalone_statement(self) -> ParseResult:
+        """Parse Capital One credit card statement.
+
+        Capital One statements have text-based transaction format:
+        - Trans Date Post Date Description Amount
+        - Payments have " - $AMOUNT" pattern
+        - Purchases have "$AMOUNT" pattern
+
+        Returns:
+            ParseResult with transactions
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Parse transactions from text
+            transactions = self._extract_capitalone_transactions(all_text)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Capital One statement"],
+                    warnings=warnings,
+                    metadata={'format': 'capitalone'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'capitalone',
+                }
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Capital One statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'capitalone'}
+            )
+
+    def _extract_capitalone_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from Capital One statement text.
+
+        Capital One transaction format:
+        - Trans Date Post Date Description Amount
+        - Date format: "Sep 18" or "Oct 4" (Month Day, no year)
+        - Credits/Payments: " - $AMOUNT"
+        - Purchases: "$AMOUNT"
+
+        Example lines:
+        Sep 18 Sep 20 DCL RESERVATIONS8009392784FL $84.00
+        Oct 4 Oct 4 CAPITAL ONE AUTOPAY PYMT - $149.48
+
+        Args:
+            text: Full text of the Capital One statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        in_transaction_section = False
+
+        # Month name to number mapping
+        month_map = {
+            'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+            'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+        }
+
+        # Pattern for Capital One transactions:
+        # Month Day Month Day Description [$]Amount or [- $]Amount
+        # Examples:
+        #   Sep 18 Sep 20 DCL RESERVATIONS8009392784FL $84.00
+        #   Oct 4 Oct 4 CAPITAL ONE AUTOPAY PYMT - $149.48
+        transaction_pattern = r'^([A-Z][a-z]{2})\s+(\d{1,2})\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(.+?)\s+(-\s*)?\$([\d,]+\.\d{2})$'
+
+        for line in lines:
+            line = line.strip()
+
+            # Detect start of transaction sections
+            if 'Payments, Credits and Adjustments' in line or 'Transactions' in line:
+                in_transaction_section = True
+                continue
+
+            # End of transaction section markers
+            if any(marker in line for marker in [
+                'Total Transactions for This Period',
+                'Total Fees for This Period',
+                'Interest Charged',
+                'Fees',
+                'Totals Year-to-Date',
+                'Additional Information',
+            ]):
+                continue
+
+            # Skip header line
+            if 'Trans Date' in line and 'Post Date' in line:
+                continue
+
+            if not in_transaction_section:
+                continue
+
+            # Skip empty lines and non-transaction content
+            if not line or line.startswith('GE GAO') or line.startswith('Total'):
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                trans_month = match.group(1)
+                trans_day = int(match.group(2))
+                post_month = match.group(3)
+                post_day = int(match.group(4))
+                description = match.group(5).strip()
+                is_credit = match.group(6) is not None  # Has "- " before amount
+                amount_str = match.group(7)
+
+                txn = self._parse_capitalone_transaction_line(
+                    post_month,
+                    post_day,
+                    description,
+                    amount_str,
+                    is_credit
+                )
+
+                if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
+                    transactions.append(txn)
+
+        return transactions
+
+    def _parse_capitalone_transaction_line(self, month_str: str, day: int,
+                                            description: str, amount_str: str,
+                                            is_credit: bool) -> Optional[Dict[str, Any]]:
+        """Parse a single Capital One transaction line.
+
+        Args:
+            month_str: Month string (e.g., "Sep", "Oct")
+            day: Day of month
+            description: Transaction description
+            amount_str: Amount string (without $ or -)
+            is_credit: Whether this is a credit/payment
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Month mapping
+            month_map = {
+                'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12
+            }
+
+            month = month_map.get(month_str)
+            if not month:
+                return None
+
+            year = self.statement_year if self.statement_year else datetime.now().year
+
+            # Handle year boundary: if transaction month > statement month by a lot,
+            # the transaction is from the previous year
+            statement_month = self._get_statement_month()
+            if month >= 10 and statement_month <= 3:
+                year -= 1
+
+            try:
+                parsed_date = datetime(year, month, day).date()
+            except ValueError:
+                return None
+
+            # Parse amount - credits are negative
+            amount = float(amount_str.replace(',', ''))
+            if is_credit:
+                amount = -amount
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_capitalone_merchant(description)
+
+            # Determine if this is a payment (transfer)
+            is_payment = 'AUTOPAY' in description.upper() or \
+                         'PAYMENT' in description.upper()
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': amount,
+                'is_payment': is_payment,
+                'currency': 'USD',
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Capital One line: {month_str} {day} {description} {amount_str}, error: {e}")
+            return None
+
+    def _clean_capitalone_merchant(self, description: str) -> str:
+        """Clean Capital One merchant description.
+
+        Capital One format examples:
+        - "DCL RESERVATIONS8009392784FL" -> "Dcl Reservations"
+        - "CHEVRON 0203324SAN JOSECA" -> "Chevron"
+        - "COSTCO WHSE #0143MOUNTAIN VIEWCA" -> "Costco Whse"
+        - "CAPITAL ONE AUTOPAY PYMT" -> "Capital One Autopay Pymt"
+
+        Args:
+            description: Raw transaction description
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Step 1: Remove prefixes
+        cleaned = re.sub(r'^SQ\s*\*\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'^GOOGLE\s*\*', 'Google ', cleaned, flags=re.IGNORECASE)
+
+        # Step 2: Remove numbers FIRST (before city/state patterns)
+        # Remove store numbers (like #0143 or #0402)
+        cleaned = re.sub(r'#\d+', '', cleaned)
+        # Remove phone numbers with or without dashes (like 8009392784 or 855-836-3987)
+        cleaned = re.sub(r'\d{3}-\d{3}-\d{4}', '', cleaned)
+        # Remove long numbers (10+ digits like phone numbers)
+        cleaned = re.sub(r'\d{10,}', '', cleaned)
+        # Remove 6+ digit store/reference numbers
+        cleaned = re.sub(r'\d{6,}', '', cleaned)
+        # Remove short store codes like F1528, -330 (letter/dash + 3-4 digits)
+        cleaned = re.sub(r'[A-Z\-]\d{3,4}(?=[A-Z]|$)', '', cleaned, flags=re.IGNORECASE)
+
+        # Step 3: Remove city/state patterns
+        # Order matters: longer patterns first
+        city_state_patterns = [
+            r'MOUNTAIN\s*VIEW\s*CA',
+            r'MOUNTAINVIEW\s*CA',
+            r'SAN\s*FRANCISCO\s*CA',
+            r'SANFRANCISCO\s*CA',
+            r'SANTA\s*CLARA\s*CA',
+            r'SANTACLARA\s*CA',
+            r'SAN\s*JOSE\s*CA',
+            r'SANJOSE\s*CA',
+            r'PALO\s*ALTO\s*CA',
+            r'PALOALTO\s*CA',
+            r'MENLO\s*PARK\s*CA',
+            r'SUNNYVALE\s*CA',
+            r'CUPERTINO\s*CA',
+            r'REDWOOD\s*CITY\s*CA',
+            r'LOS\s*ANGELES\s*CA',
+            r'NEW\s*YORK\s*NY',
+            r'GILROY\s*CA',
+            r'ANTHROPIC\.COM\s*CA',
+            r'Mountain\s*View\s*CA',  # Mixed case version
+        ]
+
+        for pattern in city_state_patterns:
+            cleaned = re.sub(pattern + r'\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Clean whitespace before further processing
+        cleaned = ' '.join(cleaned.split())
+
+        # Remove trailing 2-letter state code at end
+        # Only for common states that appear in Capital One statements
+        # Require at least 3 characters before state code to avoid breaking short words
+        common_states = ['CA', 'FL', 'GA', 'NY', 'TX', 'WA', 'OR']
+        for state in common_states:
+            # Match: at least 3 word characters, then state code at end
+            cleaned = re.sub(rf'(\w{{3,}}){state}\s*$', r'\1', cleaned, flags=re.IGNORECASE)
+
+        # Remove trailing numbers
+        cleaned = re.sub(r'\s*\d+\s*$', '', cleaned)
+
+        # Remove .COM suffix
+        cleaned = re.sub(r'\.COM\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        # Title case for cleaner display (only if all uppercase)
+        if cleaned.isupper() and len(cleaned) > 2:
+            cleaned = cleaned.title()
+
+        return cleaned.strip()
+
     def _extract_statement_year(self) -> int:
         """Extract statement year from PDF header.
 
-        Supports both Fidelity and Amex formats:
+        Supports Fidelity, Amex, and Chase formats:
         - Fidelity: "November2025 Statement", "Closing Date:11/24/2025"
         - Amex: "Closing Date01/22/25"
+        - Chase: "February 2025" or "Statement Date: 01/24/25"
 
         Returns:
             Statement year (e.g., 2025), defaults to current year if not found
@@ -526,16 +1483,37 @@ class PDFParser(BaseParser):
             if closing_date_match:
                 return int(closing_date_match.group(3))
 
+            # Look for "Statement Closing Date MM/DD/YYYY" pattern (Wells Fargo format)
+            wellsfargo_date_match = re.search(r'Statement Closing Date\s+(\d{2})/(\d{2})/(\d{4})', first_page_text)
+            if wellsfargo_date_match:
+                return int(wellsfargo_date_match.group(3))
+
+            # Look for Capital One billing cycle pattern: "Mon DD, YYYY - Mon DD, YYYY"
+            # The second date (end of cycle) has the statement year
+            capitalone_date_match = re.search(
+                r'[A-Z][a-z]{2}\s+\d{1,2},\s+\d{4}\s*-\s*[A-Z][a-z]{2}\s+\d{1,2},\s+(\d{4})',
+                first_page_text
+            )
+            if capitalone_date_match:
+                return int(capitalone_date_match.group(1))
+
+            # Look for "Month YYYY" pattern (Chase format: "February 2025")
+            # Check this BEFORE Amex pattern because Chase has "Opening/Closing Date" with older dates
+            month_year_match = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})', first_page_text)
+            if month_year_match:
+                return int(month_year_match.group(2))
+
             # Look for "Closing DateMM/DD/YY" pattern (Amex format - no colon, 2-digit year)
-            amex_date_match = re.search(r'Closing Date\s*(\d{2})/(\d{2})/(\d{2})', first_page_text)
+            # This pattern is for Amex which has "Closing Date01/22/25" without space
+            amex_date_match = re.search(r'Closing Date(\d{2})/(\d{2})/(\d{2})', first_page_text)
             if amex_date_match:
                 year_2digit = int(amex_date_match.group(3))
                 return 2000 + year_2digit
 
             # Look for "MonthYYYY Statement" pattern (e.g., "November2025 Statement")
-            month_year_match = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d{4})\s+Statement', first_page_text)
-            if month_year_match:
-                return int(month_year_match.group(2))
+            month_year_match2 = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s*(\d{4})\s+Statement', first_page_text)
+            if month_year_match2:
+                return int(month_year_match2.group(2))
 
             # Fallback: look for any 4-digit year in the first 500 characters
             year_match = re.search(r'\b(20\d{2})\b', first_page_text[:500])

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getMonthlySummary, getYearlySummary, getMerchantAnalysis, getAccounts } from '@/lib/api';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { getYearlySummary, getMerchantAnalysis, getAccounts, getDateRangeSummary } from '@/lib/api';
 import { Account } from '@/lib/types';
 
 interface MonthlySummary {
@@ -38,22 +39,45 @@ interface MerchantData {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Initialize from URL params or defaults
+  const now = new Date();
+  const defaultStartDate = `${now.getFullYear()}-01-01`;
+  const defaultEndDate = `${now.getFullYear()}-12-31`;
+
   const [summary, setSummary] = useState<MonthlySummary | null>(null);
   const [yearlySummary, setYearlySummary] = useState<YearlySummary | null>(null);
   const [topMerchants, setTopMerchants] = useState<MerchantData[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedAccount, setSelectedAccount] = useState<string>('');
+  const [selectedAccount, setSelectedAccount] = useState<string>(searchParams.get('account_id') || '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Get current month/year
-  const now = new Date();
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  // Date range filter - initialize from URL params
+  const [startDate, setStartDate] = useState(searchParams.get('start_date') || defaultStartDate);
+  const [endDate, setEndDate] = useState(searchParams.get('end_date') || defaultEndDate);
+
+  // Update URL when filters change (separate effect to avoid loops)
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (startDate !== defaultStartDate) params.set('start_date', startDate);
+    if (endDate !== defaultEndDate) params.set('end_date', endDate);
+    if (selectedAccount) params.set('account_id', selectedAccount);
+
+    const queryString = params.toString();
+    const newUrl = queryString ? `/?${queryString}` : '/';
+
+    // Only update if URL actually changed
+    if (window.location.search !== (queryString ? `?${queryString}` : '')) {
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [startDate, endDate, selectedAccount, defaultStartDate, defaultEndDate, router]);
 
   useEffect(() => {
     loadData();
-  }, [selectedAccount, selectedYear, selectedMonth]);
+  }, [selectedAccount, startDate, endDate]);
 
   async function loadData() {
     try {
@@ -63,22 +87,28 @@ export default function Dashboard() {
       const accountsData = await getAccounts();
       setAccounts(accountsData.accounts || []);
 
-      const summaryData = await getMonthlySummary(
-        selectedYear,
-        selectedMonth,
+      // Load date range summary
+      const dateRangeData = await getDateRangeSummary(
+        startDate,
+        endDate,
         selectedAccount || undefined
       );
-      setSummary(summaryData);
+      setSummary({
+        total_spend: dateRangeData.total_spend,
+        total_income: dateRangeData.total_income,
+        net: dateRangeData.net,
+        category_breakdown: dateRangeData.category_breakdown,
+      });
 
+      // Load yearly for bar chart context
       const yearlyData = await getYearlySummary(
-        selectedYear,
+        parseInt(startDate.split('-')[0]),
         selectedAccount || undefined
       );
       setYearlySummary(yearlyData);
 
-      const firstDay = new Date(selectedYear, selectedMonth - 1, 1).toISOString().split('T')[0];
-      const lastDay = new Date(selectedYear, selectedMonth, 0).toISOString().split('T')[0];
-      const merchantData = await getMerchantAnalysis(firstDay, lastDay, 10);
+      // Merchant analysis for range
+      const merchantData = await getMerchantAnalysis(startDate, endDate, 10);
       setTopMerchants(merchantData.top_merchants || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -119,30 +149,9 @@ export default function Dashboard() {
     );
   }
 
-  const monthName = new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-US', {
-    month: 'long',
-    year: 'numeric',
-  });
+  const dateRangeLabel = `${new Date(startDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${new Date(endDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-
-  const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - i);
-
-  const ytdSpend = yearlySummary?.monthly_data
-    .filter(m => m.month <= selectedMonth)
-    .reduce((sum, m) => sum + m.total_spend, 0) || 0;
-
-  const prevMonth = selectedMonth === 1 ? 12 : selectedMonth - 1;
-  const prevMonthData = yearlySummary?.monthly_data.find(m => m.month === prevMonth);
-  const currentMonthSpend = summary?.total_spend || 0;
-  const prevMonthSpend = prevMonthData?.total_spend || 0;
-  const spendChange = prevMonthSpend > 0
-    ? ((currentMonthSpend - prevMonthSpend) / prevMonthSpend) * 100
-    : 0;
-
+  const selectedYear = parseInt(startDate.split('-')[0]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 pb-12">
@@ -156,7 +165,7 @@ export default function Dashboard() {
                 <h1 className="text-5xl font-black text-white mb-2 tracking-tight">
                   Financial Dashboard
                 </h1>
-                <p className="text-2xl text-indigo-100 font-medium">{monthName}</p>
+                <p className="text-2xl text-indigo-100 font-medium">{dateRangeLabel}</p>
               </div>
             </div>
           </div>
@@ -165,41 +174,32 @@ export default function Dashboard() {
         {/* Filters with Glass Effect */}
         <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
           <h3 className="text-xl font-bold text-gray-900 mb-6">Filters</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div>
-              <label htmlFor="month-filter" className="block text-sm font-bold text-gray-700 mb-3">
-                Month
+              <label htmlFor="start-date" className="block text-sm font-bold text-gray-700 mb-3">
+                Start Date
               </label>
-              <select
-                id="month-filter"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              <input
+                type="date"
+                id="start-date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
                 className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-              >
-                {months.map((month, index) => (
-                  <option key={month} value={index + 1}>
-                    {month}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             <div>
-              <label htmlFor="year-filter" className="block text-sm font-bold text-gray-700 mb-3">
-                Year
+              <label htmlFor="end-date" className="block text-sm font-bold text-gray-700 mb-3">
+                End Date
               </label>
-              <select
-                id="year-filter"
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(Number(e.target.value))}
+              <input
+                type="date"
+                id="end-date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
                 className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-              >
-                {years.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
 
             {accounts.length > 0 && (
@@ -222,6 +222,73 @@ export default function Dashboard() {
                 </select>
               </div>
             )}
+
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-3">
+                Quick Select
+              </label>
+              <select
+                onChange={(e) => {
+                  const today = new Date();
+                  const year = today.getFullYear();
+                  switch (e.target.value) {
+                    case 'ytd':
+                      setStartDate(`${year}-01-01`);
+                      setEndDate(today.toISOString().split('T')[0]);
+                      break;
+                    case 'year':
+                      setStartDate(`${year}-01-01`);
+                      setEndDate(`${year}-12-31`);
+                      break;
+                    case 'last-year':
+                      setStartDate(`${year - 1}-01-01`);
+                      setEndDate(`${year - 1}-12-31`);
+                      break;
+                    case 'q1':
+                      setStartDate(`${year}-01-01`);
+                      setEndDate(`${year}-03-31`);
+                      break;
+                    case 'q2':
+                      setStartDate(`${year}-04-01`);
+                      setEndDate(`${year}-06-30`);
+                      break;
+                    case 'q3':
+                      setStartDate(`${year}-07-01`);
+                      setEndDate(`${year}-09-30`);
+                      break;
+                    case 'q4':
+                      setStartDate(`${year}-10-01`);
+                      setEndDate(`${year}-12-31`);
+                      break;
+                    case 'last-30':
+                      const d30 = new Date(today);
+                      d30.setDate(d30.getDate() - 30);
+                      setStartDate(d30.toISOString().split('T')[0]);
+                      setEndDate(today.toISOString().split('T')[0]);
+                      break;
+                    case 'last-90':
+                      const d90 = new Date(today);
+                      d90.setDate(d90.getDate() - 90);
+                      setStartDate(d90.toISOString().split('T')[0]);
+                      setEndDate(today.toISOString().split('T')[0]);
+                      break;
+                  }
+                }}
+                className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
+                defaultValue=""
+              >
+                <option value="" disabled>Select preset...</option>
+                <option value="ytd">Year to Date</option>
+                <option value="year">Full Year {new Date().getFullYear()}</option>
+                <option value="last-year">Last Year {new Date().getFullYear() - 1}</option>
+                <option value="q1">Q1 (Jan-Mar)</option>
+                <option value="q2">Q2 (Apr-Jun)</option>
+                <option value="q3">Q3 (Jul-Sep)</option>
+                <option value="q4">Q4 (Oct-Dec)</option>
+                <option value="last-30">Last 30 Days</option>
+                <option value="last-90">Last 90 Days</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -232,19 +299,10 @@ export default function Dashboard() {
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
             <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
             <div className="relative px-8 py-10">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-6">This Month</dt>
+              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-6">Total Spend</dt>
               <dd className="text-5xl font-black text-white mb-4">
                 ${summary?.total_spend?.toFixed(2) || '0.00'}
               </dd>
-              {spendChange !== 0 && (
-                <div className={`inline-flex items-center px-4 py-2 rounded-xl text-sm font-bold ${
-                  spendChange > 0
-                    ? 'bg-red-900/30 text-white'
-                    : 'bg-green-900/30 text-white'
-                }`}>
-                  {spendChange > 0 ? '↑' : '↓'} {Math.abs(spendChange).toFixed(1)}% vs last month
-                </div>
-              )}
             </div>
           </div>
 
@@ -257,7 +315,7 @@ export default function Dashboard() {
               <dd className="text-5xl font-black text-white mb-3">
                 ${summary?.total_income?.toFixed(2) || '0.00'}
               </dd>
-              <div className="text-sm font-semibold text-white/70">This month</div>
+              <div className="text-sm font-semibold text-white/70">In selected range</div>
             </div>
           </div>
 
@@ -278,16 +336,16 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* YTD Spending */}
+          {/* Range Total */}
           <div className="group relative overflow-hidden bg-gradient-to-br from-purple-500 to-violet-600 rounded-3xl shadow-2xl hover:shadow-purple-500/50 transform hover:-translate-y-2 transition-all duration-300">
             <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
             <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
             <div className="relative px-8 py-8">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-4">YTD Spending</dt>
+              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-4">{selectedYear} Total</dt>
               <dd className="text-5xl font-black text-white mb-3">
-                ${ytdSpend.toFixed(2)}
+                ${(yearlySummary?.total_spend || 0).toFixed(2)}
               </dd>
-              <div className="text-sm font-semibold text-white/70">Year to date</div>
+              <div className="text-sm font-semibold text-white/70">Full year spending</div>
             </div>
           </div>
         </div>
@@ -296,6 +354,10 @@ export default function Dashboard() {
         {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (() => {
           const maxYearSpend = Math.max(...yearlySummary.monthly_data.map(m => m.total_spend), 1);
           const chartHeight = 200; // pixels
+          const startMonth = parseInt(startDate.split('-')[1]);
+          const endMonth = parseInt(endDate.split('-')[1]);
+          const startYear = parseInt(startDate.split('-')[0]);
+          const endYear = parseInt(endDate.split('-')[0]);
 
           return (
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
@@ -303,28 +365,54 @@ export default function Dashboard() {
               <div className="flex items-end justify-between gap-2" style={{ height: `${chartHeight}px` }}>
                 {yearlySummary.monthly_data.map((monthData) => {
                   const barHeight = Math.max((monthData.total_spend / maxYearSpend) * chartHeight, 4);
-                  const isCurrentMonth = monthData.month === selectedMonth;
+                  // Highlight months that fall within the selected date range
+                  const isInRange = selectedYear >= startYear && selectedYear <= endYear &&
+                    ((selectedYear === startYear && selectedYear === endYear && monthData.month >= startMonth && monthData.month <= endMonth) ||
+                     (selectedYear === startYear && selectedYear < endYear && monthData.month >= startMonth) ||
+                     (selectedYear > startYear && selectedYear === endYear && monthData.month <= endMonth) ||
+                     (selectedYear > startYear && selectedYear < endYear));
+
+                  const handleBarClick = () => {
+                    // Calculate first and last day of the month
+                    const monthStart = `${selectedYear}-${String(monthData.month).padStart(2, '0')}-01`;
+                    const lastDay = new Date(selectedYear, monthData.month, 0).getDate();
+                    const monthEnd = `${selectedYear}-${String(monthData.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+                    const params = new URLSearchParams({
+                      start_date: monthStart,
+                      end_date: monthEnd,
+                    });
+                    if (selectedAccount) {
+                      params.set('account_id', selectedAccount);
+                    }
+                    router.push(`/transactions?${params.toString()}`);
+                  };
 
                   return (
-                    <div key={monthData.month} className="flex-1 flex flex-col items-center group">
+                    <div
+                      key={monthData.month}
+                      onClick={handleBarClick}
+                      className="flex-1 flex flex-col items-center group cursor-pointer"
+                    >
                       <div className="relative flex items-end justify-center w-full" style={{ height: `${chartHeight}px` }}>
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-10">
                           ${monthData.total_spend.toFixed(0)}
                           <div className="text-gray-400 text-xs">{monthData.transaction_count} txns</div>
+                          <div className="text-indigo-300 text-xs">Click to view</div>
                           <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
                             <div className="border-8 border-transparent border-t-gray-900"></div>
                           </div>
                         </div>
                         <div
-                          className={`w-full max-w-10 rounded-t-lg transition-all duration-300 cursor-pointer ${
-                            isCurrentMonth
-                              ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30'
+                          className={`w-full max-w-10 rounded-t-lg transition-all duration-300 ${
+                            isInRange
+                              ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30 group-hover:from-indigo-500 group-hover:to-purple-400'
                               : 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-indigo-400 group-hover:to-purple-400'
                           }`}
                           style={{ height: `${barHeight}px` }}
                         ></div>
                       </div>
-                      <div className={`mt-3 text-sm font-bold ${isCurrentMonth ? 'text-indigo-600' : 'text-gray-600'}`}>
+                      <div className={`mt-3 text-sm font-bold ${isInRange ? 'text-indigo-600' : 'text-gray-600'} group-hover:text-indigo-600 transition-colors`}>
                         {monthData.month_name.substring(0, 3)}
                       </div>
                     </div>
@@ -354,10 +442,28 @@ export default function Dashboard() {
                   ];
                   const gradient = gradients[index % gradients.length];
 
+                  const handleCategoryClick = () => {
+                    const params = new URLSearchParams({
+                      start_date: startDate,
+                      end_date: endDate,
+                    });
+                    if (category.category) {
+                      params.set('category', category.category);
+                    }
+                    if (selectedAccount) {
+                      params.set('account_id', selectedAccount);
+                    }
+                    router.push(`/transactions?${params.toString()}`);
+                  };
+
                   return (
-                    <div key={category.category} className="group p-5 bg-white/50 backdrop-blur-sm rounded-2xl hover:bg-white hover:shadow-xl transition-all duration-300 border border-gray-100">
+                    <div
+                      key={category.category}
+                      onClick={handleCategoryClick}
+                      className="group p-5 bg-white/50 backdrop-blur-sm rounded-2xl hover:bg-white hover:shadow-xl transition-all duration-300 border border-gray-100 cursor-pointer"
+                    >
                       <div className="flex justify-between items-center mb-3">
-                        <span className="text-base font-bold text-gray-900">
+                        <span className="text-base font-bold text-gray-900 group-hover:text-indigo-600 transition-colors">
                           {category.category || 'Uncategorized'}
                         </span>
                         <div className="text-right">
@@ -375,8 +481,9 @@ export default function Dashboard() {
                           style={{ width: `${category.percentage}%` }}
                         ></div>
                       </div>
-                      <div className="mt-3 text-sm font-semibold text-gray-600">
-                        {category.count} transaction{category.count !== 1 ? 's' : ''}
+                      <div className="mt-3 text-sm font-semibold text-gray-600 flex items-center justify-between">
+                        <span>{category.count} transaction{category.count !== 1 ? 's' : ''}</span>
+                        <span className="text-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity">View &rarr;</span>
                       </div>
                     </div>
                   );
@@ -398,23 +505,40 @@ export default function Dashboard() {
                   ];
                   const rankColor = index < 3 ? medalColors[index] : 'from-indigo-400 to-indigo-600';
 
+                  const handleMerchantClick = () => {
+                    const params = new URLSearchParams({
+                      start_date: startDate,
+                      end_date: endDate,
+                      description: merchant.merchant,
+                    });
+                    if (selectedAccount) {
+                      params.set('account_id', selectedAccount);
+                    }
+                    router.push(`/transactions?${params.toString()}`);
+                  };
+
                   return (
-                    <div key={merchant.merchant} className="group flex items-center gap-5 p-5 bg-white/50 backdrop-blur-sm rounded-2xl hover:bg-white hover:shadow-xl transition-all duration-300 border border-gray-100">
+                    <div
+                      key={merchant.merchant}
+                      onClick={handleMerchantClick}
+                      className="group flex items-center gap-5 p-5 bg-white/50 backdrop-blur-sm rounded-2xl hover:bg-white hover:shadow-xl transition-all duration-300 border border-gray-100 cursor-pointer"
+                    >
                       <div className={`flex-shrink-0 w-10 h-10 bg-gradient-to-br ${rankColor} rounded-xl flex items-center justify-center shadow-lg`}>
                         <span className="text-white font-bold text-base">#{index + 1}</span>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-base font-bold text-gray-900 truncate mb-1">
+                        <div className="text-base font-bold text-gray-900 truncate mb-1 group-hover:text-indigo-600 transition-colors">
                           {merchant.merchant}
                         </div>
                         <div className="text-sm font-semibold text-gray-600">
                           {merchant.count} · Avg ${merchant.avg_amount.toFixed(2)}
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right flex flex-col items-end">
                         <div className="text-2xl font-black text-gray-900">
                           ${merchant.total.toFixed(2)}
                         </div>
+                        <span className="text-indigo-500 text-sm opacity-0 group-hover:opacity-100 transition-opacity">View &rarr;</span>
                       </div>
                     </div>
                   );

@@ -325,11 +325,19 @@ class ImportService:
 
             if still_unmatched and settings.ENABLE_LLM_CLASSIFICATION:
                 classified_results = self.llm_classifier.classify_batch(still_unmatched)
-                llm_classified_txns = classified_results
+                # CRITICAL: Merge classification results with original transaction data
+                # The LLM classifier only returns classification fields, not the original
+                # transaction data (date, amount, row_index, etc.)
+                for j, classification in enumerate(classified_results):
+                    if j < len(still_unmatched):
+                        llm_classified_txns.append({**still_unmatched[j], **classification})
+                    else:
+                        llm_classified_txns.append(classification)
             else:
                 # If LLM disabled, use default classification
+                # Also merge with original transaction data
                 llm_classified_txns = [
-                    self._default_classification(txn) for txn in still_unmatched
+                    {**txn, **self._default_classification(txn)} for txn in still_unmatched
                 ]
 
             # Step 5: Merge all classified transactions and insert
@@ -339,12 +347,15 @@ class ImportService:
             duplicate_count = 0
             seen_hashes = set()  # Track hashes within this batch to avoid within-batch duplicates
 
-            for i, classified_data in enumerate(all_classified):
-                # Get the original transaction data
-                original_txn = new_txns[i] if i < len(new_txns) else {}
+            for classified_data in all_classified:
+                # Each classified_data now contains the original transaction data
+                # (rule_matched uses txn_data.copy(), learned uses **txn, llm now merges too)
+                # No need to look up new_txns[i] - indices wouldn't match anyway since
+                # all_classified = rule_matched + learned + llm, which are built from
+                # different subsets of new_txns
 
                 # Generate hash for deduplication using file_hash + row_index
-                txn_hash = self.dedup_service.generate_hash(import_record.account_id, file_hash, original_txn)
+                txn_hash = self.dedup_service.generate_hash(import_record.account_id, file_hash, classified_data)
 
                 # Check for duplicates in database
                 existing = self.db.query(Transaction).filter(
@@ -352,23 +363,20 @@ class ImportService:
                 ).first()
 
                 if existing:
-                    logger.info(f"Skipping duplicate transaction (already in DB): {original_txn.get('description_raw', 'Unknown')}")
+                    logger.info(f"Skipping duplicate transaction (already in DB): {classified_data.get('description_raw', 'Unknown')}")
                     duplicate_count += 1
                     continue
 
                 # Check for duplicates within current batch
                 if txn_hash in seen_hashes:
-                    logger.info(f"Skipping duplicate transaction (within batch): {original_txn.get('description_raw', 'Unknown')}")
+                    logger.info(f"Skipping duplicate transaction (within batch): {classified_data.get('description_raw', 'Unknown')}")
                     duplicate_count += 1
                     continue
 
-                # Merge original transaction data with classification
+                # classified_data already contains both original transaction data and classification
                 # Original data has: date, amount, description_raw, merchant_normalized, currency, is_credit, row_index
                 # Classification has: transaction_type, category, subcategory, is_spend, is_income, etc.
-                merged_data = {
-                    **original_txn,  # Start with original data
-                    **classified_data  # Override/add classification fields
-                }
+                merged_data = classified_data.copy()
 
                 # Remove fields not part of Transaction model
                 merged_data.pop('is_credit', None)  # Legacy field

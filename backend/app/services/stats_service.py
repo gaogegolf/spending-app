@@ -227,6 +227,89 @@ class StatsService:
             for r in results
         ]
 
+    def get_date_range_summary(self, start_date: date, end_date: date,
+                                user_id: str = "default_user",
+                                account_id: str = None) -> Dict[str, Any]:
+        """Calculate summary for a custom date range.
+
+        Args:
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+            user_id: User ID to filter by
+            account_id: Optional account ID to filter by
+
+        Returns:
+            Dictionary with date range summary including totals and category breakdown
+        """
+        # Calculate total spending (ONLY is_spend=true)
+        total_spend = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+            Account.user_id == user_id,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
+            Transaction.is_spend == True
+        )
+        if account_id:
+            total_spend = total_spend.filter(Transaction.account_id == account_id)
+        total_spend = float(total_spend.scalar() or 0)
+
+        # Calculate total income
+        total_income = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+            Account.user_id == user_id,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
+            Transaction.is_income == True
+        )
+        if account_id:
+            total_income = total_income.filter(Transaction.account_id == account_id)
+        total_income = float(total_income.scalar() or 0)
+
+        # Get transaction count
+        txn_count = self.db.query(func.count(Transaction.id)).join(Account).filter(
+            Account.user_id == user_id,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date
+        )
+        if account_id:
+            txn_count = txn_count.filter(Transaction.account_id == account_id)
+        txn_count = txn_count.scalar() or 0
+
+        # Get category breakdown (only for spending)
+        category_query = self.db.query(
+            Transaction.category,
+            func.sum(Transaction.amount).label('total'),
+            func.count(Transaction.id).label('count')
+        ).join(Account).filter(
+            Account.user_id == user_id,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
+            Transaction.is_spend == True,
+            Transaction.category.isnot(None)
+        )
+        if account_id:
+            category_query = category_query.filter(Transaction.account_id == account_id)
+
+        category_breakdown = category_query.group_by(Transaction.category).order_by(
+            func.sum(Transaction.amount).desc()
+        ).all()
+
+        return {
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'total_spend': total_spend,
+            'total_income': total_income,
+            'net': total_income - total_spend,
+            'transaction_count': txn_count,
+            'category_breakdown': [
+                {
+                    'category': cat.category,
+                    'amount': float(cat.total),
+                    'count': cat.count,
+                    'percentage': float(float(cat.total) / float(total_spend) * 100) if total_spend > 0 else 0
+                }
+                for cat in category_breakdown
+            ]
+        }
+
     def get_overview(self, user_id: str = "default_user") -> Dict[str, Any]:
         """Get dashboard overview with current month and recent transactions.
 

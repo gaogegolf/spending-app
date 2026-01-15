@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 import { formatDate, compareDates } from '@/lib/dateUtils';
 
 export default function TransactionsPage() {
+  const searchParams = useSearchParams();
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [total, setTotal] = useState(0);
@@ -33,13 +36,13 @@ export default function TransactionsPage() {
   const [deleteTarget, setDeleteTarget] = useState<'single' | 'bulk'>('bulk');
   const [singleDeleteId, setSingleDeleteId] = useState<string | null>(null);
 
-  // Filters
-  const [accountFilter, setAccountFilter] = useState<string>('');
-  const [typeFilter, setTypeFilter] = useState<string>('');
-  const [categoryFilter, setCategoryFilter] = useState<string>('');
-  const [descriptionFilter, setDescriptionFilter] = useState<string>('');
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  // Filters - initialize from URL params
+  const [accountFilter, setAccountFilter] = useState<string>(searchParams.get('account_id') || '');
+  const [typeFilter, setTypeFilter] = useState<string>(searchParams.get('transaction_type') || '');
+  const [categoryFilter, setCategoryFilter] = useState<string>(searchParams.get('category') || '');
+  const [descriptionFilter, setDescriptionFilter] = useState<string>(searchParams.get('description') || '');
+  const [startDate, setStartDate] = useState<string>(searchParams.get('start_date') || '');
+  const [endDate, setEndDate] = useState<string>(searchParams.get('end_date') || '');
 
   // Sorting state
   type SortColumn = 'date' | 'description' | 'category' | 'type' | 'amount';

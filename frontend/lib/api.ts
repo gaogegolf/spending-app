@@ -183,6 +183,17 @@ export async function getYearlySummary(year: number, accountId?: string) {
   return response.json();
 }
 
+export async function getDateRangeSummary(startDate: string, endDate: string, accountId?: string) {
+  const queryParams = new URLSearchParams({ start_date: startDate, end_date: endDate });
+  if (accountId) {
+    queryParams.append('account_id', accountId);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/stats/date-range?${queryParams}`);
+  if (!response.ok) throw new Error('Failed to fetch date range summary');
+  return response.json();
+}
+
 export async function getCategoryBreakdown(startDate: string, endDate: string, accountId?: string) {
   const queryParams = new URLSearchParams({ start_date: startDate, end_date: endDate });
   if (accountId) {
