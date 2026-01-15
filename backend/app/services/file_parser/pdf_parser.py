@@ -61,6 +61,9 @@ class PDFParser(BaseParser):
             if self.statement_format == 'allybank':
                 return self._parse_allybank_statement()
 
+            if self.statement_format == 'chasebank':
+                return self._parse_chasebank_statement()
+
             # Default: Try Fidelity format
             # Extract all tables from all pages
             self.tables = self.extract_tables()
@@ -192,6 +195,20 @@ class PDFParser(BaseParser):
             if any(indicator in first_page_text for indicator in ally_indicators):
                 return 'allybank'
 
+            # Check for Chase Bank (checking/savings) indicators FIRST
+            # Must check before Capital One/Wells Fargo as those names may appear as payments
+            chase_bank_indicators = [
+                'CHASE TOTAL CHECKING',
+                'Chase Total Checking',
+                'CHASE SAVINGS',
+                'Chase Savings',
+                'CHECKING SUMMARY',
+                'SAVINGS SUMMARY',
+            ]
+
+            if any(indicator in first_page_text for indicator in chase_bank_indicators):
+                return 'chasebank'
+
             # Check for Capital One indicators
             capitalone_indicators = [
                 'Capital One',
@@ -217,7 +234,7 @@ class PDFParser(BaseParser):
             if any(indicator in first_page_text for indicator in wellsfargo_indicators):
                 return 'wellsfargo'
 
-            # Check for Chase indicators
+            # Check for Chase Credit Card indicators
             chase_indicators = [
                 'chase.com',
                 'Chase Mobile',
@@ -1833,6 +1850,294 @@ class PDFParser(BaseParser):
         cleaned = ' '.join(cleaned.split())
 
         # Title case for cleaner display (only if all uppercase)
+        if cleaned.isupper() and len(cleaned) > 2:
+            cleaned = cleaned.title()
+
+        return cleaned.strip() if cleaned else description
+
+    def _parse_chasebank_statement(self) -> ParseResult:
+        """Parse Chase Bank checking/savings statement.
+
+        Chase Bank statements have:
+        - TRANSACTION DETAIL sections
+        - Format: MM/DD Description Amount Balance
+        - Statement period in header (e.g., "November 26, 2025throughDecember 22, 2025")
+        """
+        try:
+            if not self.pdf:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["Failed to open PDF"],
+                    warnings=[],
+                    metadata={'format': 'chasebank'}
+                )
+
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            if not all_text:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No text extracted from Chase Bank statement"],
+                    warnings=[],
+                    metadata={'format': 'chasebank'}
+                )
+
+            # Extract statement year from header
+            statement_year = self._extract_chasebank_year(all_text)
+
+            # Extract transactions
+            transactions = self._extract_chasebank_transactions(all_text, statement_year)
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Chase Bank statement"],
+                    warnings=[],
+                    metadata={'format': 'chasebank'}
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=[],
+                warnings=[],
+                metadata={
+                    'total_transactions': len(transactions),
+                    'format': 'chasebank',
+                    'statement_year': statement_year,
+                }
+            )
+
+        except Exception as e:
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=[f"Failed to parse Chase Bank statement: {str(e)}"],
+                warnings=[],
+                metadata={'format': 'chasebank'}
+            )
+
+    def _extract_chasebank_year(self, text: str) -> int:
+        """Extract statement year from Chase Bank header.
+
+        Format: "November 26, 2025throughDecember 22, 2025"
+        """
+        import re
+        from datetime import datetime
+
+        # Look for date pattern in header
+        date_pattern = r'(\w+\s+\d{1,2},\s*\d{4})\s*through\s*(\w+\s+\d{1,2},\s*\d{4})'
+        match = re.search(date_pattern, text, re.IGNORECASE)
+
+        if match:
+            try:
+                end_date_str = match.group(2)
+                # Parse "December 22, 2025"
+                end_date = datetime.strptime(end_date_str, "%B %d, %Y")
+                return end_date.year
+            except ValueError:
+                pass
+
+        # Fallback to current year
+        return datetime.now().year
+
+    def _extract_chasebank_transactions(self, text: str, statement_year: int) -> List[Dict[str, Any]]:
+        """Extract transactions from Chase Bank statement text.
+
+        Transaction format:
+        MM/DD Description Amount Balance
+        e.g., "11/28 Comcast-Xfinity Cable Svcs PPD ID: 0000213249 -55.00 24,287.58"
+        """
+        import re
+        from datetime import datetime
+
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        in_transaction_section = False
+
+        # Pattern: MM/DD Description Amount Balance
+        # Amount can be negative (-55.00) or positive (0.39)
+        # Balance is always positive with optional $ sign
+        transaction_pattern = r'^(\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})\s+([\d,]+\.\d{2})$'
+
+        for i, line in enumerate(lines):
+            line = line.strip()
+
+            # Detect transaction section start
+            if 'TRANSACTION DETAIL' in line:
+                in_transaction_section = True
+                continue
+
+            # Skip headers and markers
+            if 'DATE DESCRIPTION AMOUNT BALANCE' in line.upper():
+                continue
+            if 'Beginning Balance' in line or 'Ending Balance' in line:
+                continue
+            if '*start*' in line or '*end*' in line:
+                in_transaction_section = False
+                continue
+
+            if not in_transaction_section:
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                date_str = match.group(1)
+                description = match.group(2).strip()
+                amount_str = match.group(3)
+                # balance_str = match.group(4)  # Not needed
+
+                txn = self._parse_chasebank_transaction_line(
+                    date_str,
+                    description,
+                    amount_str,
+                    statement_year,
+                    row_index
+                )
+
+                if txn:
+                    transactions.append(txn)
+                    row_index += 1
+
+        return transactions
+
+    def _parse_chasebank_transaction_line(self, date_str: str, description: str,
+                                           amount_str: str, statement_year: int,
+                                           row_index: int) -> Optional[Dict[str, Any]]:
+        """Parse a single Chase Bank transaction line.
+
+        Args:
+            date_str: Date string in MM/DD format
+            description: Transaction description
+            amount_str: Amount string (negative for withdrawals)
+            statement_year: Year from statement header
+            row_index: Row index for deduplication
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        from datetime import datetime
+
+        try:
+            # Parse date (MM/DD format)
+            month, day = date_str.split('/')
+            month_int = int(month)
+            day_int = int(day)
+
+            # Handle year rollover (statement might span two years)
+            # Use statement_year, but if month is > current statement month, it's previous year
+            parsed_date = datetime(statement_year, month_int, day_int).date()
+
+            # Parse amount
+            amount = float(amount_str.replace(',', ''))
+
+            # For bank accounts:
+            # - Negative amounts = withdrawals (outflow) → positive for expense tracking
+            # - Positive amounts = deposits (income) → negative for expense tracking
+            if amount < 0:
+                # Withdrawal (expense/transfer)
+                final_amount = abs(amount)
+                is_credit = False
+            else:
+                # Deposit (income)
+                final_amount = -amount
+                is_credit = True
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_chasebank_merchant(description)
+
+            # Determine if this is a payment/transfer
+            desc_upper = description.upper()
+
+            # Credit card payment keywords
+            cc_payment_keywords = [
+                'CREDIT CARD', 'CREDIT CRD', 'CRCARDPMT', 'AUTOPAY',
+                'WF CREDIT', 'CHASE CREDIT', 'AMEX', 'AMERICAN EXPRESS',
+                'CAPITAL ONE', 'CITI CARD', 'DISCOVER', 'BARCLAYS',
+                'BANK OF AMERICA', 'SYNCHRONY',
+            ]
+
+            # Bank-to-bank transfer keywords
+            bank_transfer_keywords = [
+                'EXT TRNSFR', 'EXTERNAL TRANSFER', 'BANK TRANSFER',
+                'WIRE TRANSFER', 'ZELLE', 'VENMO', 'PAYPAL',
+            ]
+
+            is_cc_payment = any(kw in desc_upper for kw in cc_payment_keywords) and amount < 0
+            is_bank_transfer = any(kw in desc_upper for kw in bank_transfer_keywords) and amount < 0
+            is_payment = is_cc_payment or is_bank_transfer
+            transfer_category = 'Credit Card Payments' if is_cc_payment else 'Transfers' if is_bank_transfer else None
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': final_amount,
+                'is_payment': is_payment,
+                'is_credit': is_credit,
+                'transfer_category': transfer_category,
+                'currency': 'USD',
+                'row_index': row_index,
+            }
+
+        except Exception as e:
+            print(f"Failed to parse Chase Bank line: {date_str} {description}, error: {e}")
+            return None
+
+    def _clean_chasebank_merchant(self, description: str) -> str:
+        """Clean Chase Bank merchant description.
+
+        Chase Bank format examples:
+        - "Comcast-Xfinity Cable Svcs PPD ID: 0000213249" -> "Comcast Xfinity Cable Svcs"
+        - "Wf Credit Card Auto Pay PPD ID: 50260000" -> "WF Credit Card"
+        - "Capital One Crcardpmt CA06B3D96E7C79B Web ID: 9541719318" -> "Capital One"
+        - "American Express ACH Pmt A7602 Web ID: 9493560001" -> "American Express"
+        """
+        import re
+
+        cleaned = description
+
+        # Remove PPD ID, Web ID suffixes
+        cleaned = re.sub(r'\s*PPD ID:\s*\d+\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s*Web ID:\s*\d+\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove alphanumeric reference codes (like CA06B3D96E7C79B, A7602, Ckf520086972POS)
+        cleaned = re.sub(r'\s+[A-Za-z]+\d+[A-Za-z0-9]*\s*$', '', cleaned)
+        cleaned = re.sub(r'\s+[A-Za-z]\d{4,}\s*$', '', cleaned)
+
+        # Remove "ACH Pmt" suffix
+        cleaned = re.sub(r'\s+ACH Pmt\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove "Auto Pay" suffix (keep the company name before it)
+        cleaned = re.sub(r'\s+Auto Pay\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Remove "Crcardpmt" and similar
+        cleaned = re.sub(r'\s+Crcardpmt\s*$', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s+Crcardpmt\s+', ' ', cleaned, flags=re.IGNORECASE)
+
+        # Remove "Auto EFT" suffix
+        cleaned = re.sub(r'\s+Auto EFT\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Clean up common patterns
+        cleaned = re.sub(r'\s+Online Pmt\s*$', '', cleaned, flags=re.IGNORECASE)
+
+        # Replace hyphens with spaces for readability
+        cleaned = cleaned.replace('-', ' ')
+
+        # Remove extra whitespace
+        cleaned = ' '.join(cleaned.split())
+
+        # Title case if all uppercase
         if cleaned.isupper() and len(cleaned) > 2:
             cleaned = cleaned.title()
 
