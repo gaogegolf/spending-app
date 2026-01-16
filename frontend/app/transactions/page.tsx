@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions } from '@/lib/api';
+import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions, getMerchantTransactionCount, applyMerchantCategory } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 import { formatDate, compareDates } from '@/lib/dateUtils';
@@ -35,6 +35,16 @@ export default function TransactionsPage() {
   const [noteValue, setNoteValue] = useState<string>('');
   const [savingNote, setSavingNote] = useState(false);
 
+  // Apply merchant category prompt state
+  const [showApplyMerchantPrompt, setShowApplyMerchantPrompt] = useState(false);
+  const [applyMerchantData, setApplyMerchantData] = useState<{
+    merchant: string;
+    category: string;
+    transactionId: string;
+    otherCount: number;
+  } | null>(null);
+  const [applyingMerchant, setApplyingMerchant] = useState(false);
+
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -46,6 +56,7 @@ export default function TransactionsPage() {
   const [typeFilter, setTypeFilter] = useState<string>(searchParams.get('transaction_type') || '');
   const [categoryFilter, setCategoryFilter] = useState<string>(searchParams.get('category') || '');
   const [descriptionFilter, setDescriptionFilter] = useState<string>(searchParams.get('description') || '');
+  const [matchRulePatternFilter, setMatchRulePatternFilter] = useState<string>(searchParams.get('match_rule_pattern') || '');
   const [startDate, setStartDate] = useState<string>(searchParams.get('start_date') || '');
   const [endDate, setEndDate] = useState<string>(searchParams.get('end_date') || '');
 
@@ -60,7 +71,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     loadTransactions();
-  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, descriptionFilter, startDate, endDate]);
+  }, [page, pageSize, accountFilter, typeFilter, categoryFilter, descriptionFilter, matchRulePatternFilter, startDate, endDate]);
 
   // Lock body scroll when modal is open (only for single delete)
   useEffect(() => {
@@ -93,6 +104,7 @@ export default function TransactionsPage() {
         transaction_type: typeFilter || undefined,
         category: categoryFilter || undefined,
         description: descriptionFilter || undefined,
+        match_rule_pattern: matchRulePatternFilter || undefined,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
         page,
@@ -113,6 +125,7 @@ export default function TransactionsPage() {
     setTypeFilter('');
     setCategoryFilter('');
     setDescriptionFilter('');
+    setMatchRulePatternFilter('');
     setStartDate('');
     setEndDate('');
     setPage(1);
@@ -232,6 +245,8 @@ export default function TransactionsPage() {
         account_id: accountFilter || undefined,
         transaction_type: typeFilter || undefined,
         category: categoryFilter || undefined,
+        description: descriptionFilter || undefined,
+        match_rule_pattern: matchRulePatternFilter || undefined,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
       });
@@ -249,17 +264,66 @@ export default function TransactionsPage() {
 
       await updateTransaction(transactionId, { category: newCategory });
 
+      // Find the transaction to get its merchant
+      const transaction = transactions.find(t => t.id === transactionId);
+
       // Update the transaction in local state
       setTransactions(transactions.map(t =>
         t.id === transactionId ? { ...t, category: newCategory, classification_method: 'MANUAL' as const } : t
       ));
 
       setEditingCategoryId(null);
+
+      // Check if there are other transactions with the same merchant
+      if (transaction?.merchant_normalized) {
+        try {
+          const result = await getMerchantTransactionCount(transaction.merchant_normalized, transactionId);
+          if (result.count > 0) {
+            setApplyMerchantData({
+              merchant: transaction.merchant_normalized,
+              category: newCategory,
+              transactionId: transactionId,
+              otherCount: result.count,
+            });
+            setShowApplyMerchantPrompt(true);
+          }
+        } catch {
+          // Silently ignore - don't block the main operation
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update category');
     } finally {
       setSavingCategory(false);
     }
+  }
+
+  async function handleApplyMerchantCategory() {
+    if (!applyMerchantData) return;
+
+    try {
+      setApplyingMerchant(true);
+      const result = await applyMerchantCategory(
+        applyMerchantData.merchant,
+        applyMerchantData.category,
+        applyMerchantData.transactionId
+      );
+
+      // Reload transactions to show updated categories
+      await loadTransactions();
+
+      setShowApplyMerchantPrompt(false);
+      setApplyMerchantData(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to apply category to other transactions');
+    } finally {
+      setApplyingMerchant(false);
+    }
+  }
+
+  function closeApplyMerchantPrompt() {
+    setShowApplyMerchantPrompt(false);
+    setApplyMerchantData(null);
   }
 
   async function handleTypeChange(transactionId: string, newType: string) {
@@ -626,6 +690,26 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      {/* Rule Filter Indicator */}
+      {matchRulePatternFilter && (
+        <div className="mb-6 bg-indigo-50 border-l-4 border-indigo-500 rounded-lg p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-indigo-600">🔍</span>
+              <span className="text-indigo-700">
+                Showing transactions matching rule pattern
+              </span>
+            </div>
+            <button
+              onClick={() => setMatchRulePatternFilter('')}
+              className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+            >
+              Clear filter
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Error Message */}
       {error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
@@ -776,7 +860,7 @@ export default function TransactionsPage() {
             </div>
           )}
 
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -795,6 +879,9 @@ export default function TransactionsPage() {
                     <div className="flex items-center">
                       Date{getSortIcon('date')}
                     </div>
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Account
                   </th>
                   <th
                     className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
@@ -846,6 +933,11 @@ export default function TransactionsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {formatDateDisplay(transaction.date)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <div className="max-w-[120px] truncate" title={accounts.find(a => a.id === transaction.account_id)?.name || transaction.account_id}>
+                        {accounts.find(a => a.id === transaction.account_id)?.name || '-'}
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">
                       <div className="max-w-xs">
@@ -1006,6 +1098,45 @@ export default function TransactionsPage() {
                 className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
               >
                 {deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply Merchant Category Prompt Modal */}
+      {showApplyMerchantPrompt && applyMerchantData && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !applyingMerchant) {
+              closeApplyMerchantPrompt();
+            }
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Apply to Other Transactions?</h3>
+            <p className="text-gray-600 mb-4">
+              Found <span className="font-semibold">{applyMerchantData.otherCount}</span> other transaction{applyMerchantData.otherCount !== 1 ? 's' : ''} from{' '}
+              <span className="font-semibold">{applyMerchantData.merchant}</span>.
+            </p>
+            <p className="text-gray-600 mb-6">
+              Would you like to apply <span className="font-semibold">"{applyMerchantData.category}"</span> to all of them?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={closeApplyMerchantPrompt}
+                disabled={applyingMerchant}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleApplyMerchantCategory}
+                disabled={applyingMerchant}
+                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+              >
+                {applyingMerchant ? 'Applying...' : `Apply to ${applyMerchantData.otherCount} Transaction${applyMerchantData.otherCount !== 1 ? 's' : ''}`}
               </button>
             </div>
           </div>

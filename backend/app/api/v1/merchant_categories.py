@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.merchant_category import MerchantCategory
+from app.models.transaction import Transaction
 from app.schemas.merchant_category import (
     MerchantCategoryCreate,
     MerchantCategoryUpdate,
@@ -252,4 +253,50 @@ def bulk_delete_merchant_categories(
     return {
         "deleted_count": deleted_count,
         "message": f"Successfully deleted {deleted_count} merchant category mappings"
+    }
+
+
+@router.post("/merchant-categories/refresh-counts", response_model=dict)
+def refresh_merchant_counts(
+    db: Session = Depends(get_db)
+):
+    """Refresh times_applied counts for all merchant categories.
+
+    Recalculates based on actual transaction counts per merchant.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Summary of refreshed counts
+    """
+    # Get all merchant categories
+    merchant_categories = db.query(MerchantCategory).filter(
+        MerchantCategory.user_id == 'default_user'
+    ).all()
+
+    updated_mappings = []
+    for mapping in merchant_categories:
+        # Count transactions with this merchant
+        actual_count = db.query(Transaction).filter(
+            Transaction.merchant_normalized == mapping.merchant_normalized
+        ).count()
+
+        # Update if different
+        if mapping.times_applied != actual_count:
+            old_count = mapping.times_applied
+            mapping.times_applied = actual_count
+            updated_mappings.append({
+                "merchant": mapping.merchant_normalized,
+                "old_count": old_count,
+                "new_count": actual_count
+            })
+
+    db.commit()
+
+    return {
+        "total_merchants": len(merchant_categories),
+        "updated_merchants": len(updated_mappings),
+        "changes": updated_mappings,
+        "message": f"Refreshed counts for {len(updated_mappings)} merchant mappings"
     }

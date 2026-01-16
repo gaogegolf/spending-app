@@ -59,6 +59,9 @@ export default function Dashboard() {
   const [startDate, setStartDate] = useState(searchParams.get('start_date') || defaultStartDate);
   const [endDate, setEndDate] = useState(searchParams.get('end_date') || defaultEndDate);
 
+  // Bar chart mode: 'expense', 'income', 'net'
+  const [chartMode, setChartMode] = useState<'expense' | 'income' | 'net'>('expense');
+
   // Update URL when filters change (separate effect to avoid loops)
   useEffect(() => {
     const params = new URLSearchParams();
@@ -108,7 +111,7 @@ export default function Dashboard() {
       setYearlySummary(yearlyData);
 
       // Merchant analysis for range
-      const merchantData = await getMerchantAnalysis(startDate, endDate, 10);
+      const merchantData = await getMerchantAnalysis(startDate, endDate, 100);
       setTopMerchants(merchantData.top_merchants || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -350,21 +353,93 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Yearly Spending Bar Chart */}
+        {/* Yearly Bar Chart */}
         {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (() => {
-          const maxYearSpend = Math.max(...yearlySummary.monthly_data.map(m => m.total_spend), 1);
+          // Get the value based on chart mode
+          const getValue = (m: typeof yearlySummary.monthly_data[0]) => {
+            switch (chartMode) {
+              case 'expense': return m.total_spend;
+              case 'income': return m.total_income;
+              case 'net': return m.net;
+            }
+          };
+
+          // For net mode, we need to handle negative values
+          const values = yearlySummary.monthly_data.map(m => getValue(m));
+          const maxValue = Math.max(...values.map(v => Math.abs(v)), 1);
+          const hasNegative = chartMode === 'net' && values.some(v => v < 0);
+
           const chartHeight = 200; // pixels
           const startMonth = parseInt(startDate.split('-')[1]);
           const endMonth = parseInt(endDate.split('-')[1]);
           const startYear = parseInt(startDate.split('-')[0]);
           const endYear = parseInt(endDate.split('-')[0]);
 
+          const chartTitles = {
+            expense: `${selectedYear} Spending`,
+            income: `${selectedYear} Income`,
+            net: `${selectedYear} Net (Income - Expense)`,
+          };
+
+          const barColors = {
+            expense: {
+              active: 'bg-gradient-to-t from-rose-600 to-pink-500 shadow-lg shadow-rose-500/30 group-hover:from-rose-500 group-hover:to-pink-400',
+              inactive: 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-rose-400 group-hover:to-pink-400',
+            },
+            income: {
+              active: 'bg-gradient-to-t from-emerald-600 to-teal-500 shadow-lg shadow-emerald-500/30 group-hover:from-emerald-500 group-hover:to-teal-400',
+              inactive: 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-emerald-400 group-hover:to-teal-400',
+            },
+            net: {
+              positive: 'bg-gradient-to-t from-blue-600 to-indigo-500 shadow-lg shadow-blue-500/30 group-hover:from-blue-500 group-hover:to-indigo-400',
+              negative: 'bg-gradient-to-b from-orange-600 to-red-500 shadow-lg shadow-orange-500/30 group-hover:from-orange-500 group-hover:to-red-400',
+              inactive: 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-blue-400 group-hover:to-indigo-400',
+            },
+          };
+
           return (
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
-              <h3 className="text-2xl font-bold text-gray-900 mb-8">{selectedYear} Spending</h3>
-              <div className="flex items-end justify-between gap-2" style={{ height: `${chartHeight}px` }}>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+                <h3 className="text-2xl font-bold text-gray-900">{chartTitles[chartMode]}</h3>
+                <div className="flex rounded-xl bg-gray-100 p-1 relative z-20">
+                  <button
+                    onClick={() => setChartMode('expense')}
+                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                      chartMode === 'expense'
+                        ? 'bg-white text-rose-600 shadow-md'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Expense
+                  </button>
+                  <button
+                    onClick={() => setChartMode('income')}
+                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                      chartMode === 'income'
+                        ? 'bg-white text-emerald-600 shadow-md'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Income
+                  </button>
+                  <button
+                    onClick={() => setChartMode('net')}
+                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
+                      chartMode === 'net'
+                        ? 'bg-white text-blue-600 shadow-md'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    Net
+                  </button>
+                </div>
+              </div>
+              <div className={`flex items-end justify-between gap-2 ${hasNegative ? 'items-center' : ''}`} style={{ height: `${chartHeight}px` }}>
                 {yearlySummary.monthly_data.map((monthData) => {
-                  const barHeight = Math.max((monthData.total_spend / maxYearSpend) * chartHeight, 4);
+                  const value = getValue(monthData);
+                  const barHeight = Math.max((Math.abs(value) / maxValue) * (hasNegative ? chartHeight / 2 : chartHeight), 4);
+                  const isNegative = value < 0;
+
                   // Highlight months that fall within the selected date range
                   const isInRange = selectedYear >= startYear && selectedYear <= endYear &&
                     ((selectedYear === startYear && selectedYear === endYear && monthData.month >= startMonth && monthData.month <= endMonth) ||
@@ -388,31 +463,71 @@ export default function Dashboard() {
                     router.push(`/transactions?${params.toString()}`);
                   };
 
+                  // Determine bar color based on mode and value
+                  let barColorClass = '';
+                  if (chartMode === 'net') {
+                    if (isInRange) {
+                      barColorClass = isNegative ? barColors.net.negative : barColors.net.positive;
+                    } else {
+                      barColorClass = barColors.net.inactive;
+                    }
+                  } else {
+                    barColorClass = isInRange ? barColors[chartMode].active : barColors[chartMode].inactive;
+                  }
+
                   return (
                     <div
                       key={monthData.month}
                       onClick={handleBarClick}
                       className="flex-1 flex flex-col items-center group cursor-pointer"
                     >
-                      <div className="relative flex items-end justify-center w-full" style={{ height: `${chartHeight}px` }}>
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-10">
-                          ${monthData.total_spend.toFixed(0)}
-                          <div className="text-gray-400 text-xs">{monthData.transaction_count} txns</div>
-                          <div className="text-indigo-300 text-xs">Click to view</div>
-                          <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
-                            <div className="border-8 border-transparent border-t-gray-900"></div>
+                      {/* Upper half (positive bars or all bars in non-net mode) */}
+                      <div
+                        className="relative flex items-end justify-center w-full"
+                        style={{ height: hasNegative ? `${chartHeight / 2}px` : `${chartHeight}px` }}
+                      >
+                        {(!hasNegative || !isNegative) && (
+                          <div className="relative">
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-30 pointer-events-none">
+                              {chartMode === 'net' && value < 0 ? '-' : ''}${Math.abs(value).toFixed(0)}
+                              <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 translate-y-full">
+                                <div className="border-8 border-transparent border-t-gray-900"></div>
+                              </div>
+                            </div>
+                            <div
+                              className={`w-10 rounded-t-lg transition-all duration-300 ${barColorClass}`}
+                              style={{ height: `${barHeight}px` }}
+                            ></div>
                           </div>
-                        </div>
-                        <div
-                          className={`w-full max-w-10 rounded-t-lg transition-all duration-300 ${
-                            isInRange
-                              ? 'bg-gradient-to-t from-indigo-600 to-purple-500 shadow-lg shadow-indigo-500/30 group-hover:from-indigo-500 group-hover:to-purple-400'
-                              : 'bg-gradient-to-t from-gray-300 to-gray-400 group-hover:from-indigo-400 group-hover:to-purple-400'
-                          }`}
-                          style={{ height: `${barHeight}px` }}
-                        ></div>
+                        )}
                       </div>
-                      <div className={`mt-3 text-sm font-bold ${isInRange ? 'text-indigo-600' : 'text-gray-600'} group-hover:text-indigo-600 transition-colors`}>
+                      {/* Baseline for net mode */}
+                      {hasNegative && (
+                        <div className="w-full h-px bg-gray-400"></div>
+                      )}
+                      {/* Lower half (negative bars in net mode) */}
+                      {hasNegative && (
+                        <div
+                          className="relative flex items-start justify-center w-full"
+                          style={{ height: `${chartHeight / 2}px` }}
+                        >
+                          {isNegative && (
+                            <div className="relative">
+                              <div
+                                className={`w-10 rounded-b-lg transition-all duration-300 ${barColorClass}`}
+                                style={{ height: `${barHeight}px` }}
+                              ></div>
+                              <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg whitespace-nowrap z-30 pointer-events-none">
+                                -${Math.abs(value).toFixed(0)}
+                                <div className="absolute top-0 left-1/2 transform -translate-x-1/2 -translate-y-full">
+                                  <div className="border-8 border-transparent border-b-gray-900"></div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className={`mt-3 text-sm font-bold ${isInRange ? (chartMode === 'expense' ? 'text-rose-600' : chartMode === 'income' ? 'text-emerald-600' : 'text-blue-600') : 'text-gray-600'} group-hover:text-indigo-600 transition-colors`}>
                         {monthData.month_name.substring(0, 3)}
                       </div>
                     </div>
@@ -428,8 +543,8 @@ export default function Dashboard() {
           {summary?.category_breakdown && summary.category_breakdown.length > 0 && (
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8">
               <h3 className="text-2xl font-bold text-gray-900 mb-8">Categories</h3>
-              <div className="space-y-5">
-                {[...summary.category_breakdown].sort((a, b) => b.amount - a.amount).slice(0, 8).map((category, index) => {
+              <div className="space-y-5 max-h-[600px] overflow-y-auto pr-2">
+                {[...summary.category_breakdown].sort((a, b) => b.amount - a.amount).map((category, index) => {
                   const gradients = [
                     'from-blue-500 to-cyan-500',
                     'from-purple-500 to-pink-500',
@@ -496,7 +611,7 @@ export default function Dashboard() {
           {topMerchants.length > 0 && (
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8">
               <h3 className="text-2xl font-bold text-gray-900 mb-8">Top Merchants</h3>
-              <div className="space-y-4">
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                 {topMerchants.map((merchant, index) => {
                   const medalColors = [
                     'from-yellow-400 to-yellow-600',

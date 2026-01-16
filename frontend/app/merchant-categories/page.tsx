@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getMerchantCategories, updateMerchantCategory, deleteMerchantCategory, bulkDeleteMerchantCategories } from '@/lib/api';
+import { getMerchantCategories, updateMerchantCategory, deleteMerchantCategory, bulkDeleteMerchantCategories, refreshMerchantCounts } from '@/lib/api';
 import { MerchantCategory, MerchantCategoryListResponse } from '@/lib/types';
 
 // Empower-style categories (same as transactions page)
@@ -58,6 +58,10 @@ export default function MerchantCategoriesPage() {
   const [merchantSearch, setMerchantSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+
+  // Refresh counts state
+  const [refreshingCounts, setRefreshingCounts] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Debounce search
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -183,6 +187,26 @@ export default function MerchantCategoriesPage() {
     }
   }
 
+  async function handleRefreshCounts() {
+    try {
+      setRefreshingCounts(true);
+      setError(null);
+      const result = await refreshMerchantCounts();
+      await loadMerchantCategories();
+      if (result.updated_merchants > 0) {
+        setSuccessMessage(`Updated counts for ${result.updated_merchants} merchants`);
+      } else {
+        setSuccessMessage('All counts are up to date');
+      }
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh counts');
+    } finally {
+      setRefreshingCounts(false);
+    }
+  }
+
   function getSourceColor(source: string): string {
     switch (source) {
       case 'USER':
@@ -202,13 +226,43 @@ export default function MerchantCategoriesPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Merchant Categories</h1>
-        <p className="mt-2 text-gray-600">
-          These are learned category mappings. When you manually categorize a transaction,
-          the merchant is remembered for future auto-categorization.
-        </p>
+      <div className="flex items-start justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Merchant Categories</h1>
+          <p className="mt-2 text-gray-600">
+            These are learned category mappings. When you manually categorize a transaction,
+            the merchant is remembered for future auto-categorization.
+          </p>
+        </div>
+        <button
+          onClick={handleRefreshCounts}
+          disabled={refreshingCounts}
+          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+          title="Recalculate times applied based on current transactions"
+        >
+          {refreshingCounts ? (
+            <>
+              <span className="animate-spin">⟳</span>
+              Refreshing...
+            </>
+          ) : (
+            <>
+              <span>🔄</span>
+              Refresh Counts
+            </>
+          )}
+        </button>
       </div>
+
+      {/* Success Message */}
+      {successMessage && (
+        <div className="mb-6 bg-green-50 border-l-4 border-green-500 rounded-lg p-4">
+          <div className="flex items-center">
+            <span className="text-green-500 mr-2">✓</span>
+            <p className="text-green-800">{successMessage}</p>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white shadow rounded-lg p-6 mb-6">
@@ -364,7 +418,7 @@ export default function MerchantCategoriesPage() {
             </div>
           )}
 
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className="bg-white shadow rounded-lg overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -387,9 +441,6 @@ export default function MerchantCategoriesPage() {
                   </th>
                   <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Times Applied
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Confidence
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Last Updated
@@ -448,17 +499,6 @@ export default function MerchantCategoriesPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">
                       {mc.times_applied}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-center">
-                      <div className="flex items-center justify-center">
-                        <div className="w-16 bg-gray-200 rounded-full h-2 mr-2">
-                          <div
-                            className="bg-indigo-600 h-2 rounded-full"
-                            style={{ width: `${mc.confidence * 100}%` }}
-                          />
-                        </div>
-                        <span className="text-gray-500">{Math.round(mc.confidence * 100)}%</span>
-                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(mc.updated_at)}

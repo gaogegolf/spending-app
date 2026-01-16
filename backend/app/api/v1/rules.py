@@ -397,3 +397,50 @@ def apply_rule_to_transactions(
         "updated_count": updated_count,
         "message": f"Successfully applied rule to {updated_count} transactions"
     }
+
+
+@router.post("/rules/refresh-counts", response_model=dict)
+def refresh_all_match_counts(
+    db: Session = Depends(get_db)
+):
+    """Refresh match counts for all rules by recounting actual matches.
+
+    This recalculates the match_count for each rule based on current transactions.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Summary of refreshed counts
+    """
+    rules = db.query(Rule).filter(Rule.user_id == 'default_user').all()
+    transactions = db.query(Transaction).all()
+    rule_engine = RuleEngine(db)
+
+    updated_rules = []
+    for rule in rules:
+        # Count actual matches
+        actual_count = sum(
+            1 for t in transactions
+            if rule_engine._rule_matches(rule, t)
+        )
+
+        # Update if different
+        if rule.match_count != actual_count:
+            old_count = rule.match_count
+            rule.match_count = actual_count
+            updated_rules.append({
+                "rule_id": rule.id,
+                "name": rule.name,
+                "old_count": old_count,
+                "new_count": actual_count
+            })
+
+    db.commit()
+
+    return {
+        "total_rules": len(rules),
+        "updated_rules": len(updated_rules),
+        "changes": updated_rules,
+        "message": f"Refreshed match counts for {len(updated_rules)} rules"
+    }

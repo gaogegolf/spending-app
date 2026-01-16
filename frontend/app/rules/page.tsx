@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getRules, createRule, updateRule, deleteRule, toggleRule, getRuleMatchCount, applyRuleToTransactions } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { getRules, createRule, updateRule, deleteRule, toggleRule, getRuleMatchCount, applyRuleToTransactions, refreshRuleMatchCounts } from '@/lib/api';
 import { Rule, RuleAction, RuleType, RuleListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 
@@ -39,6 +40,7 @@ const defaultFormData: FormData = {
 };
 
 export default function RulesPage() {
+  const router = useRouter();
   const [rules, setRules] = useState<Rule[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,9 @@ export default function RulesPage() {
   const [applyMatchCount, setApplyMatchCount] = useState(0);
   const [applying, setApplying] = useState(false);
   const [applySuccess, setApplySuccess] = useState<string | null>(null);
+
+  // Refresh match counts state
+  const [refreshingCounts, setRefreshingCounts] = useState(false);
 
   useEffect(() => {
     loadRules();
@@ -259,6 +264,24 @@ export default function RulesPage() {
     setApplyMatchCount(0);
   }
 
+  async function handleRefreshCounts() {
+    try {
+      setRefreshingCounts(true);
+      setError(null);
+      const result = await refreshRuleMatchCounts();
+      await loadRules();
+      if (result.updated_rules > 0) {
+        setApplySuccess(`Updated match counts for ${result.updated_rules} rules`);
+      } else {
+        setApplySuccess('All match counts are up to date');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to refresh match counts');
+    } finally {
+      setRefreshingCounts(false);
+    }
+  }
+
   async function handleToggle(rule: Rule) {
     try {
       setTogglingId(rule.id);
@@ -342,13 +365,33 @@ export default function RulesPage() {
             Create custom rules to automatically categorize transactions based on patterns.
           </p>
         </div>
-        <button
-          onClick={openCreateModal}
-          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium text-sm flex items-center gap-2"
-        >
-          <span>+</span>
-          Create Rule
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleRefreshCounts}
+            disabled={refreshingCounts}
+            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+            title="Recalculate match counts based on current transactions"
+          >
+            {refreshingCounts ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <span>🔄</span>
+                Refresh Counts
+              </>
+            )}
+          </button>
+          <button
+            onClick={openCreateModal}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium text-sm flex items-center gap-2"
+          >
+            <span>+</span>
+            Create Rule
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -470,7 +513,13 @@ export default function RulesPage() {
               {rules.map((rule) => (
                 <tr key={rule.id} className={`hover:bg-gray-50 ${!rule.is_active ? 'opacity-60' : ''}`}>
                   <td className="px-6 py-4 text-sm">
-                    <div className="font-medium text-gray-900">{rule.name}</div>
+                    <button
+                      onClick={() => router.push(`/transactions?match_rule_pattern=${rule.id}`)}
+                      className="font-medium text-gray-900 hover:text-indigo-600 hover:underline text-left"
+                      title="View transactions matching this rule"
+                    >
+                      {rule.name}
+                    </button>
                     {rule.description && (
                       <div className="text-gray-500 text-xs mt-1 max-w-xs truncate" title={rule.description}>
                         {rule.description}

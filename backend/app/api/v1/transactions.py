@@ -12,6 +12,8 @@ from sqlalchemy import or_
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
 from app.models.merchant_category import MerchantCategory
+from app.models.rule import Rule
+from app.services.classifier.rule_engine import RuleEngine
 from app.schemas.transaction import (
     TransactionCreate,
     TransactionUpdate,
@@ -31,6 +33,8 @@ def list_transactions(
     transaction_type: Optional[TransactionType] = Query(None),
     category: Optional[str] = Query(None),
     description: Optional[str] = Query(None, description="Search in description/merchant"),
+    matched_rule_id: Optional[str] = Query(None, description="Filter by matched rule ID (historical)"),
+    match_rule_pattern: Optional[str] = Query(None, description="Filter by rule pattern (dynamic matching)"),
     is_spend: Optional[bool] = Query(None),
     needs_review: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
@@ -46,6 +50,8 @@ def list_transactions(
         transaction_type: Filter by transaction type
         category: Filter by category
         description: Search in description_raw or merchant_normalized
+        matched_rule_id: Filter by matched rule ID (historical - stored in transaction)
+        match_rule_pattern: Filter by rule pattern (dynamic - applies rule matching logic)
         is_spend: Filter by spending flag
         needs_review: Filter by review flag
         page: Page number (1-indexed)
@@ -82,15 +88,37 @@ def list_transactions(
         query = query.filter(Transaction.is_spend == is_spend)
     if needs_review is not None:
         query = query.filter(Transaction.needs_review == needs_review)
+    if matched_rule_id:
+        query = query.filter(Transaction.matched_rule_id == matched_rule_id)
 
-    # Get total count
-    total = query.count()
-
-    # Apply pagination
-    offset = (page - 1) * page_size
-    transactions = query.order_by(Transaction.date.desc()).offset(offset).limit(page_size).all()
-
-    has_more = (offset + len(transactions)) < total
+    # Handle dynamic rule pattern matching (requires in-memory filtering)
+    if match_rule_pattern:
+        rule = db.query(Rule).filter(Rule.id == match_rule_pattern).first()
+        if rule:
+            rule_engine = RuleEngine(db)
+            # Get all transactions matching other filters first
+            all_transactions = query.order_by(Transaction.date.desc()).all()
+            # Filter by rule pattern in memory
+            matching_transactions = [
+                t for t in all_transactions
+                if rule_engine._rule_matches(rule, t)
+            ]
+            total = len(matching_transactions)
+            # Apply pagination
+            offset = (page - 1) * page_size
+            transactions = matching_transactions[offset:offset + page_size]
+            has_more = (offset + len(transactions)) < total
+        else:
+            # Rule not found, return empty
+            total = 0
+            transactions = []
+            has_more = False
+    else:
+        # Standard SQL-based filtering
+        total = query.count()
+        offset = (page - 1) * page_size
+        transactions = query.order_by(Transaction.date.desc()).offset(offset).limit(page_size).all()
+        has_more = (offset + len(transactions)) < total
 
     return TransactionListResponse(
         transactions=transactions,
@@ -108,6 +136,8 @@ def export_transactions(
     end_date: Optional[date] = Query(None),
     transaction_type: Optional[TransactionType] = Query(None),
     category: Optional[str] = Query(None),
+    description: Optional[str] = Query(None, description="Search in description/merchant"),
+    match_rule_pattern: Optional[str] = Query(None, description="Filter by rule pattern"),
     format: str = Query("csv", description="Export format: csv"),
     db: Session = Depends(get_db)
 ):
@@ -121,6 +151,8 @@ def export_transactions(
         end_date: Filter by date <= end_date
         transaction_type: Filter by transaction type
         category: Filter by category
+        description: Search in description_raw or merchant_normalized
+        match_rule_pattern: Filter by rule pattern (dynamic matching)
         format: Export format (currently only CSV supported)
         db: Database session
 
@@ -140,9 +172,30 @@ def export_transactions(
         query = query.filter(Transaction.transaction_type == transaction_type)
     if category:
         query = query.filter(Transaction.category == category)
+    if description:
+        search_term = f"%{description}%"
+        query = query.filter(
+            or_(
+                Transaction.description_raw.ilike(search_term),
+                Transaction.merchant_normalized.ilike(search_term)
+            )
+        )
 
-    # Get all matching transactions
-    transactions = query.order_by(Transaction.date.desc()).all()
+    # Handle dynamic rule pattern matching
+    if match_rule_pattern:
+        rule = db.query(Rule).filter(Rule.id == match_rule_pattern).first()
+        if rule:
+            rule_engine = RuleEngine(db)
+            all_transactions = query.order_by(Transaction.date.desc()).all()
+            transactions = [
+                t for t in all_transactions
+                if rule_engine._rule_matches(rule, t)
+            ]
+        else:
+            transactions = []
+    else:
+        # Get all matching transactions
+        transactions = query.order_by(Transaction.date.desc()).all()
 
     # Create CSV in memory
     output = io.StringIO()
@@ -547,3 +600,76 @@ def _learn_merchant_category(db: Session, merchant_normalized: str, category: st
         db.add(new_mapping)
 
     # Note: commit happens in the calling function
+
+
+@router.get("/transactions/merchant-count/{merchant_normalized}", response_model=dict)
+def get_merchant_transaction_count(
+    merchant_normalized: str,
+    exclude_transaction_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Get count of transactions with a specific merchant.
+
+    Args:
+        merchant_normalized: The normalized merchant name
+        exclude_transaction_id: Optional transaction ID to exclude from count
+        db: Database session
+
+    Returns:
+        Count of matching transactions
+    """
+    query = db.query(Transaction).filter(
+        Transaction.merchant_normalized == merchant_normalized
+    )
+
+    if exclude_transaction_id:
+        query = query.filter(Transaction.id != exclude_transaction_id)
+
+    count = query.count()
+
+    return {
+        "merchant": merchant_normalized,
+        "count": count,
+        "message": f"Found {count} other transactions from {merchant_normalized}"
+    }
+
+
+@router.post("/transactions/apply-merchant-category", response_model=dict)
+def apply_category_to_merchant_transactions(
+    merchant_normalized: str = Query(...),
+    category: str = Query(...),
+    exclude_transaction_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Apply a category to all transactions with a specific merchant.
+
+    Args:
+        merchant_normalized: The normalized merchant name
+        category: The category to apply
+        exclude_transaction_id: Optional transaction ID to exclude
+        db: Database session
+
+    Returns:
+        Count of updated transactions
+    """
+    query = db.query(Transaction).filter(
+        Transaction.merchant_normalized == merchant_normalized
+    )
+
+    if exclude_transaction_id:
+        query = query.filter(Transaction.id != exclude_transaction_id)
+
+    transactions = query.all()
+
+    for txn in transactions:
+        txn.category = category
+        txn.classification_method = 'LEARNED'
+
+    db.commit()
+
+    return {
+        "merchant": merchant_normalized,
+        "category": category,
+        "updated_count": len(transactions),
+        "message": f"Applied '{category}' to {len(transactions)} transactions from {merchant_normalized}"
+    }

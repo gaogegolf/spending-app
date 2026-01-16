@@ -101,6 +101,8 @@ export async function getTransactions(params?: {
   transaction_type?: string;
   category?: string;
   description?: string;
+  matched_rule_id?: string;
+  match_rule_pattern?: string;
   needs_review?: boolean;
   page?: number;
   page_size?: number;
@@ -157,6 +159,32 @@ export async function reclassifyAllTransactions() {
     method: 'POST',
   });
   if (!response.ok) throw new Error('Failed to reclassify transactions');
+  return response.json();
+}
+
+export async function getMerchantTransactionCount(merchantNormalized: string, excludeTransactionId?: string) {
+  const queryParams = new URLSearchParams();
+  if (excludeTransactionId) {
+    queryParams.append('exclude_transaction_id', excludeTransactionId);
+  }
+  const url = `${API_BASE_URL}/transactions/merchant-count/${encodeURIComponent(merchantNormalized)}${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to get merchant transaction count');
+  return response.json();
+}
+
+export async function applyMerchantCategory(merchantNormalized: string, category: string, excludeTransactionId?: string) {
+  const queryParams = new URLSearchParams({
+    merchant_normalized: merchantNormalized,
+    category: category,
+  });
+  if (excludeTransactionId) {
+    queryParams.append('exclude_transaction_id', excludeTransactionId);
+  }
+  const response = await fetch(`${API_BASE_URL}/transactions/apply-merchant-category?${queryParams}`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to apply merchant category');
   return response.json();
 }
 
@@ -290,6 +318,14 @@ export async function bulkDeleteMerchantCategories(ids: string[]) {
   return response.json();
 }
 
+export async function refreshMerchantCounts() {
+  const response = await fetch(`${API_BASE_URL}/merchant-categories/refresh-counts`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to refresh merchant counts');
+  return response.json();
+}
+
 // Rules API
 export async function getRules(params?: {
   rule_type?: string;
@@ -411,6 +447,14 @@ export async function applyRuleToTransactions(id: string) {
   return response.json();
 }
 
+export async function refreshRuleMatchCounts() {
+  const response = await fetch(`${API_BASE_URL}/rules/refresh-counts`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to refresh match counts');
+  return response.json();
+}
+
 // Export API
 export async function exportTransactions(params?: {
   account_id?: string;
@@ -418,6 +462,8 @@ export async function exportTransactions(params?: {
   end_date?: string;
   transaction_type?: string;
   category?: string;
+  description?: string;
+  match_rule_pattern?: string;
 }) {
   const queryParams = new URLSearchParams();
   if (params) {
