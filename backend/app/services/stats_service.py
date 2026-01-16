@@ -93,12 +93,15 @@ class StatsService:
 
         category_breakdown = category_query.group_by(Transaction.category).all()
 
+        # Income is stored as negative, convert to positive for display
+        total_income_positive = abs(total_income)
+
         return {
             'year': year,
             'month': month,
             'total_spend': total_spend,
-            'total_income': total_income,
-            'net': total_income - total_spend,
+            'total_income': total_income_positive,
+            'net': total_income_positive - total_spend,
             'category_breakdown': [
                 {
                     'category': cat.category,
@@ -132,14 +135,14 @@ class StatsService:
             })
 
         total_spend = sum(m['total_spend'] for m in monthly_data)
-        total_income = sum(m['total_income'] for m in monthly_data)
+        total_income = sum(m['total_income'] for m in monthly_data)  # Already positive from monthly
 
         return {
             'year': year,
             'monthly_data': monthly_data,
             'total_spend': total_spend,
             'total_income': total_income,
-            'net': total_income - total_spend,
+            'net': total_income - total_spend,  # Both values already positive
             'avg_monthly_spend': total_spend / 12 if total_spend > 0 else 0
         }
 
@@ -292,12 +295,15 @@ class StatsService:
             func.sum(Transaction.amount).desc()
         ).all()
 
+        # Income is stored as negative, convert to positive for display
+        total_income_positive = abs(total_income)
+
         return {
             'start_date': start_date.isoformat(),
             'end_date': end_date.isoformat(),
             'total_spend': total_spend,
-            'total_income': total_income,
-            'net': total_income - total_spend,
+            'total_income': total_income_positive,
+            'net': total_income_positive - total_spend,
             'transaction_count': txn_count,
             'category_breakdown': [
                 {
