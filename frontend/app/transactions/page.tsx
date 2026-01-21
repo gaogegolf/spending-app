@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions, getMerchantTransactionCount, applyMerchantCategory } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
@@ -64,6 +64,11 @@ export default function TransactionsPage() {
   type SortColumn = 'date' | 'description' | 'category' | 'type' | 'amount';
   const [sortColumn, setSortColumn] = useState<SortColumn>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Grouping state
+  type GroupBy = 'none' | 'merchant' | 'category' | 'type' | 'account' | 'month';
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadAccounts();
@@ -465,6 +470,73 @@ export default function TransactionsPage() {
     return sortDirection === 'asc' ? comparison : -comparison;
   });
 
+  // Grouping helper functions
+  function getGroupKey(transaction: Transaction): string {
+    switch (groupBy) {
+      case 'merchant':
+        return transaction.merchant_normalized || transaction.description_raw || 'Unknown';
+      case 'category':
+        return transaction.category || 'Uncategorized';
+      case 'type':
+        return transaction.transaction_type;
+      case 'account':
+        return transaction.account_id;
+      case 'month':
+        return transaction.date.substring(0, 7); // YYYY-MM
+      default:
+        return 'all';
+    }
+  }
+
+  function getGroupLabel(key: string): string {
+    switch (groupBy) {
+      case 'account':
+        return accounts.find(a => a.id === key)?.name || key;
+      case 'month':
+        const [year, month] = key.split('-');
+        return new Date(parseInt(year), parseInt(month) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      default:
+        return key;
+    }
+  }
+
+  function toggleGroup(key: string) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  // Group transactions
+  const groupedTransactions = useMemo(() => {
+    if (groupBy === 'none') {
+      return [{ key: 'all', label: 'All Transactions', transactions: sortedTransactions, total: 0, count: sortedTransactions.length }];
+    }
+
+    const groups: Record<string, Transaction[]> = {};
+    sortedTransactions.forEach(t => {
+      const key = getGroupKey(t);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    });
+
+    // Sort groups by total amount (descending)
+    return Object.entries(groups)
+      .map(([key, transactions]) => ({
+        key,
+        label: getGroupLabel(key),
+        transactions,
+        total: transactions.reduce((sum, t) => sum + Math.abs(parseFloat(t.amount)), 0),
+        count: transactions.length
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [sortedTransactions, groupBy, accounts]);
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between mb-8">
@@ -667,6 +739,29 @@ export default function TransactionsPage() {
               placeholder="Search description..."
               className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
             />
+          </div>
+
+          {/* Group By */}
+          <div>
+            <label htmlFor="group-by" className="block text-sm font-medium text-gray-700 mb-1">
+              Group By
+            </label>
+            <select
+              id="group-by"
+              value={groupBy}
+              onChange={(e) => {
+                setGroupBy(e.target.value as GroupBy);
+                setCollapsedGroups(new Set());
+              }}
+              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+            >
+              <option value="none">None</option>
+              <option value="merchant">Merchant</option>
+              <option value="category">Category</option>
+              <option value="type">Type</option>
+              <option value="account">Account</option>
+              <option value="month">Month</option>
+            </select>
           </div>
 
         </div>
@@ -921,7 +1016,36 @@ export default function TransactionsPage() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {sortedTransactions.map((transaction) => (
+                {groupedTransactions.map((group) => (
+                  <React.Fragment key={group.key}>
+                    {/* Group Header Row */}
+                    {groupBy !== 'none' && (
+                      <tr
+                        className="bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        onClick={() => toggleGroup(group.key)}
+                      >
+                        <td colSpan={8} className="px-6 py-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <span className="text-indigo-600 text-sm">
+                                {collapsedGroups.has(group.key) ? '▶' : '▼'}
+                              </span>
+                              <span className="font-semibold text-gray-900">
+                                {group.label}
+                              </span>
+                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full">
+                                {group.count} transaction{group.count !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            <span className="font-semibold text-gray-900">
+                              ${group.total.toFixed(2)}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {/* Transaction Rows */}
+                    {!collapsedGroups.has(group.key) && group.transactions.map((transaction) => (
                   <tr key={transaction.id} className="hover:bg-gray-50">
                     <td className="px-4 py-4">
                       <input
@@ -1034,7 +1158,7 @@ export default function TransactionsPage() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
                       <span className={transaction.is_spend ? 'text-red-600' : transaction.is_income ? 'text-green-600' : 'text-gray-900'}>
-                        ${parseFloat(transaction.amount).toFixed(2)}
+                        {transaction.is_income ? '+' : ''}${Math.abs(parseFloat(transaction.amount)).toFixed(2)}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
@@ -1056,6 +1180,8 @@ export default function TransactionsPage() {
                       </div>
                     </td>
                   </tr>
+                    ))}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
