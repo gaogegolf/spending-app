@@ -224,35 +224,46 @@ export default function MerchantCategoriesPage() {
     return new Date(dateString).toLocaleDateString();
   }
 
+  // Filter panel state
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
+
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="flex items-start justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Merchant Categories</h1>
-          <p className="mt-2 text-gray-600">
-            These are learned category mappings. When you manually categorize a transaction,
-            the merchant is remembered for future auto-categorization.
-          </p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        {/* Page Header */}
+        <div className="flex items-start justify-between mb-10">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+              <span className="text-2xl">🏪</span>
+            </div>
+            <div>
+              <h1 className="text-4xl font-black bg-gradient-to-r from-gray-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent">
+                Merchant Categories
+              </h1>
+              <p className="text-gray-600 mt-1 max-w-xl">
+                Learned category mappings from your manual categorizations
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleRefreshCounts}
+            disabled={refreshingCounts}
+            className="px-4 py-2.5 bg-white/80 backdrop-blur-sm border border-gray-200 text-gray-700 rounded-xl hover:bg-white hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-medium text-sm flex items-center gap-2 shadow-sm"
+            title="Recalculate times applied based on current transactions"
+          >
+            {refreshingCounts ? (
+              <>
+                <span className="animate-spin">⟳</span>
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <span>🔄</span>
+                Refresh Counts
+              </>
+            )}
+          </button>
         </div>
-        <button
-          onClick={handleRefreshCounts}
-          disabled={refreshingCounts}
-          className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
-          title="Recalculate times applied based on current transactions"
-        >
-          {refreshingCounts ? (
-            <>
-              <span className="animate-spin">⟳</span>
-              Refreshing...
-            </>
-          ) : (
-            <>
-              <span>🔄</span>
-              Refresh Counts
-            </>
-          )}
-        </button>
-      </div>
 
       {/* Success Message */}
       {successMessage && (
@@ -265,77 +276,105 @@ export default function MerchantCategoriesPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Filters</h2>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {/* Merchant Search */}
-          <div>
-            <label htmlFor="merchant-search" className="block text-sm font-medium text-gray-700 mb-1">
-              Search Merchant
-            </label>
-            <input
-              type="text"
-              id="merchant-search"
-              value={merchantSearch}
-              onChange={(e) => setMerchantSearch(e.target.value)}
-              placeholder="Type to search..."
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
-          </div>
-
-          {/* Source Filter */}
-          <div>
-            <label htmlFor="source-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Source
-            </label>
-            <select
-              id="source-filter"
-              value={sourceFilter}
-              onChange={(e) => {
-                setSourceFilter(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All Sources</option>
-              <option value="USER">User (Manual)</option>
-              <option value="AUTO">Auto-learned</option>
-              <option value="LLM">AI Classified</option>
-            </select>
-          </div>
-
-          {/* Category Filter */}
-          <div>
-            <label htmlFor="category-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Category
-            </label>
-            <select
-              id="category-filter"
-              value={categoryFilter}
-              onChange={(e) => {
-                setCategoryFilter(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All Categories</option>
-              {CATEGORIES.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+      <div className="bg-white/70 backdrop-blur-xl shadow-xl rounded-2xl border border-white/50 overflow-hidden mb-6">
+        {/* Filter Header */}
+        <div
+          className="px-6 py-4 bg-gradient-to-r from-gray-50/80 to-white/80 border-b border-gray-100 cursor-pointer hover:bg-gray-50/90 transition-colors"
+          onClick={() => setFiltersExpanded(!filtersExpanded)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-indigo-100 transition-transform duration-200 ${filtersExpanded ? 'rotate-90' : ''}`}>
+                <span className="text-indigo-600 text-sm font-bold">▶</span>
+              </div>
+              <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+              {(merchantSearch || sourceFilter || categoryFilter) && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                  Active
+                </span>
+              )}
+            </div>
+            {(merchantSearch || sourceFilter || categoryFilter) && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  resetFilters();
+                }}
+                className="text-sm text-gray-500 hover:text-red-600 transition-colors"
+              >
+                Clear all
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="mt-4">
-          <button
-            onClick={resetFilters}
-            className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-          >
-            Reset All Filters
-          </button>
-        </div>
+        {filtersExpanded && (
+          <div className="p-6">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              {/* Merchant Search */}
+              <div>
+                <label htmlFor="merchant-search" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Search Merchant
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    id="merchant-search"
+                    value={merchantSearch}
+                    onChange={(e) => setMerchantSearch(e.target.value)}
+                    placeholder="Type to search..."
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">🔍</span>
+                </div>
+              </div>
+
+              {/* Source Filter */}
+              <div>
+                <label htmlFor="source-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Source
+                </label>
+                <select
+                  id="source-filter"
+                  value={sourceFilter}
+                  onChange={(e) => {
+                    setSourceFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="">All Sources</option>
+                  <option value="USER">User (Manual)</option>
+                  <option value="AUTO">Auto-learned</option>
+                  <option value="LLM">AI Classified</option>
+                </select>
+              </div>
+
+              {/* Category Filter */}
+              <div>
+                <label htmlFor="category-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Category
+                </label>
+                <select
+                  id="category-filter"
+                  value={categoryFilter}
+                  onChange={(e) => {
+                    setCategoryFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="">All Categories</option>
+                  {CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Error Message */}
@@ -347,16 +386,18 @@ export default function MerchantCategoriesPage() {
 
       {/* Table */}
       {loading ? (
-        <div className="bg-white shadow rounded-lg p-12">
+        <div className="bg-white/70 backdrop-blur-xl shadow-xl rounded-2xl border border-white/50 p-12">
           <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-indigo-200 border-t-indigo-600 mx-auto mb-4"></div>
             <p className="text-gray-500">Loading merchant categories...</p>
           </div>
         </div>
       ) : merchantCategories.length === 0 ? (
-        <div className="bg-white shadow rounded-lg p-12">
+        <div className="bg-white/70 backdrop-blur-xl shadow-xl rounded-2xl border border-white/50 p-12">
           <div className="text-center">
-            <p className="text-gray-500 mb-2">No merchant categories found.</p>
-            <p className="text-gray-400 text-sm">
+            <div className="text-6xl mb-4">🏪</div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No merchant categories found</h3>
+            <p className="text-gray-500 max-w-md mx-auto">
               Categories are automatically learned when you manually categorize transactions.
             </p>
           </div>
@@ -418,7 +459,7 @@ export default function MerchantCategoriesPage() {
             </div>
           )}
 
-          <div className="bg-white shadow rounded-lg overflow-x-auto">
+          <div className="bg-white/70 backdrop-blur-xl shadow-xl rounded-2xl border border-white/50 overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
@@ -519,7 +560,7 @@ export default function MerchantCategoriesPage() {
           </div>
 
           {/* Pagination */}
-          <div className="bg-white px-4 py-3 border-t border-gray-200 sm:px-6 mt-4 rounded-lg shadow">
+          <div className="bg-white/70 backdrop-blur-xl px-4 py-3 border border-white/50 sm:px-6 mt-4 rounded-2xl shadow-xl">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-700">
@@ -610,6 +651,7 @@ export default function MerchantCategoriesPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

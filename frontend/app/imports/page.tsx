@@ -172,9 +172,22 @@ export default function ImportsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-      <h1 className="text-4xl font-bold text-gray-900 mb-3">Import Transactions</h1>
-      <p className="text-gray-600 mb-8">Upload CSV or PDF files from your bank statements</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        {/* Page Header */}
+        <div className="mb-10">
+          <div className="flex items-center gap-4 mb-3">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+              <span className="text-2xl">📤</span>
+            </div>
+            <div>
+              <h1 className="text-4xl font-black bg-gradient-to-r from-gray-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent">
+                Import Transactions
+              </h1>
+              <p className="text-gray-600 mt-1">Upload CSV or PDF files from your bank statements</p>
+            </div>
+          </div>
+        </div>
 
       {/* Error Message */}
       {error && (
@@ -188,7 +201,7 @@ export default function ImportsPage() {
 
       {/* Step 1: Select Account and File */}
       {step === 'select' && (
-        <div className="bg-white shadow-xl rounded-xl border border-gray-200 p-8">
+        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
           <form onSubmit={handleFileUpload}>
             {/* Account Selection */}
             <div className="mb-8">
@@ -271,7 +284,7 @@ export default function ImportsPage() {
 
       {/* Step 2: Processing */}
       {(step === 'upload' || step === 'processing') && (
-        <div className="bg-white shadow-xl rounded-xl border border-gray-200 p-8">
+        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
           <div className="text-center">
             <div className="animate-spin rounded-full h-16 w-16 border-4 border-indigo-200 border-t-indigo-600 mx-auto mb-6"></div>
             <p className="text-xl text-gray-800 font-semibold mb-2">
@@ -293,7 +306,7 @@ export default function ImportsPage() {
 
       {/* Step 3: Complete */}
       {step === 'complete' && importRecords.length > 0 && (
-        <div className="bg-white shadow-xl rounded-xl border border-gray-200 p-8">
+        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
           <div className="text-center mb-8">
             <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
               <svg
@@ -493,6 +506,7 @@ export default function ImportsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

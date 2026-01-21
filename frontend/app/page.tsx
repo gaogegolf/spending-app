@@ -62,6 +62,9 @@ export default function Dashboard() {
   // Bar chart mode: 'expense', 'income', 'net'
   const [chartMode, setChartMode] = useState<'expense' | 'income' | 'net'>('expense');
 
+  // Filter panel state
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+
   // Update URL when filters change (separate effect to avoid loops)
   useEffect(() => {
     const params = new URLSearchParams();
@@ -174,67 +177,51 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Filters with Glass Effect */}
-        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
-          <h3 className="text-xl font-bold text-gray-900 mb-6">Filters</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div>
-              <label htmlFor="start-date" className="block text-sm font-bold text-gray-700 mb-3">
-                Start Date
-              </label>
-              <input
-                type="date"
-                id="start-date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="end-date" className="block text-sm font-bold text-gray-700 mb-3">
-                End Date
-              </label>
-              <input
-                type="date"
-                id="end-date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-              />
-            </div>
-
-            {accounts.length > 0 && (
-              <div>
-                <label htmlFor="account-filter" className="block text-sm font-bold text-gray-700 mb-3">
-                  Account
-                </label>
-                <select
-                  id="account-filter"
-                  value={selectedAccount}
-                  onChange={(e) => setSelectedAccount(e.target.value)}
-                  className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-                >
-                  <option value="">All Accounts</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
+        {/* Filters with Collapsible Panel */}
+        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 overflow-hidden mb-10">
+          {/* Filter Header - Always visible */}
+          <div
+            className="px-8 py-5 bg-gradient-to-r from-gray-50/80 to-white/80 border-b border-gray-100 cursor-pointer hover:bg-gray-50/90 transition-colors"
+            onClick={() => setFiltersExpanded(!filtersExpanded)}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center bg-indigo-100 transition-transform duration-200 ${filtersExpanded ? 'rotate-90' : ''}`}>
+                  <span className="text-indigo-600 text-sm font-bold">▶</span>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">Filters & Date Range</h3>
+                  <p className="text-sm text-gray-500">{dateRangeLabel}</p>
+                </div>
               </div>
-            )}
+              <div className="flex items-center gap-3">
+                {selectedAccount && (
+                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                    {accounts.find(a => a.id === selectedAccount)?.name || 'Account filtered'}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
 
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-3">
-                Quick Select
-              </label>
-              <select
-                onChange={(e) => {
+          {/* Quick Date Presets - Always visible */}
+          <div className="px-8 py-4 bg-gray-50/50 border-b border-gray-100">
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: 'ytd', label: 'Year to Date' },
+                { value: 'year', label: `Full ${new Date().getFullYear()}` },
+                { value: 'last-year', label: `${new Date().getFullYear() - 1}` },
+                { value: 'q1', label: 'Q1' },
+                { value: 'q2', label: 'Q2' },
+                { value: 'q3', label: 'Q3' },
+                { value: 'q4', label: 'Q4' },
+                { value: 'last-30', label: 'Last 30 Days' },
+                { value: 'last-90', label: 'Last 90 Days' },
+              ].map((preset) => {
+                const handlePresetClick = () => {
                   const today = new Date();
                   const year = today.getFullYear();
-                  switch (e.target.value) {
+                  switch (preset.value) {
                     case 'ytd':
                       setStartDate(`${year}-01-01`);
                       setEndDate(today.toISOString().split('T')[0]);
@@ -276,82 +263,170 @@ export default function Dashboard() {
                       setEndDate(today.toISOString().split('T')[0]);
                       break;
                   }
-                }}
-                className="block w-full px-5 py-4 bg-white border-2 border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/30 focus:border-indigo-500 text-base font-medium transition-all hover:border-indigo-300"
-                defaultValue=""
-              >
-                <option value="" disabled>Select preset...</option>
-                <option value="ytd">Year to Date</option>
-                <option value="year">Full Year {new Date().getFullYear()}</option>
-                <option value="last-year">Last Year {new Date().getFullYear() - 1}</option>
-                <option value="q1">Q1 (Jan-Mar)</option>
-                <option value="q2">Q2 (Apr-Jun)</option>
-                <option value="q3">Q3 (Jul-Sep)</option>
-                <option value="q4">Q4 (Oct-Dec)</option>
-                <option value="last-30">Last 30 Days</option>
-                <option value="last-90">Last 90 Days</option>
-              </select>
+                };
+
+                return (
+                  <button
+                    key={preset.value}
+                    onClick={handlePresetClick}
+                    className="px-4 py-2 text-sm font-semibold text-gray-600 bg-white hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all border border-gray-200 hover:border-indigo-300 shadow-sm"
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
+
+          {/* Expanded Filter Content */}
+          {filtersExpanded && (
+            <div className="p-8">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Date Range */}
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                    Custom Date Range
+                  </label>
+                  <div className="flex items-center gap-4">
+                    <input
+                      type="date"
+                      id="start-date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="flex-1 px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                    />
+                    <span className="text-gray-400 font-medium">to</span>
+                    <input
+                      type="date"
+                      id="end-date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="flex-1 px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Account Filter */}
+                {accounts.length > 0 && (
+                  <div>
+                    <label htmlFor="account-filter" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                      Account
+                    </label>
+                    <select
+                      id="account-filter"
+                      value={selectedAccount}
+                      onChange={(e) => setSelectedAccount(e.target.value)}
+                      className="block w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                    >
+                      <option value="">All Accounts</option>
+                      {accounts.map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Main Stats Cards */}
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-10">
-          {/* Total Spend */}
-          <div className="group relative overflow-hidden bg-gradient-to-br from-rose-500 to-pink-600 rounded-3xl shadow-2xl hover:shadow-rose-500/50 transform hover:-translate-y-2 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-            <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-            <div className="relative px-8 py-10">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-6">Total Spend</dt>
-              <dd className="text-5xl font-black text-white mb-4">
-                ${summary?.total_spend?.toFixed(2) || '0.00'}
-              </dd>
-            </div>
-          </div>
+        {(() => {
+          // Calculate days in range for daily average
+          const start = new Date(startDate);
+          const end = new Date(endDate);
+          const daysInRange = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+          const dailyAvgSpend = (summary?.total_spend || 0) / daysInRange;
+          const categoryCount = summary?.category_breakdown?.length || 0;
 
-          {/* Total Income */}
-          <div className="group relative overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600 rounded-3xl shadow-2xl hover:shadow-emerald-500/50 transform hover:-translate-y-2 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-            <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-            <div className="relative px-8 py-8">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-4">Income</dt>
-              <dd className="text-5xl font-black text-white mb-3">
-                ${summary?.total_income?.toFixed(2) || '0.00'}
-              </dd>
-              <div className="text-sm font-semibold text-white/70">In selected range</div>
-            </div>
-          </div>
+          return (
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-10">
+              {/* Total Spend */}
+              <div className="group relative overflow-hidden bg-gradient-to-br from-rose-500 to-pink-600 rounded-2xl shadow-xl hover:shadow-rose-500/40 transform hover:-translate-y-1 transition-all duration-300">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12"></div>
+                <div className="relative px-6 py-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <dt className="text-xs font-bold text-white/80 uppercase tracking-wider">Total Spend</dt>
+                    <span className="text-2xl">💸</span>
+                  </div>
+                  <dd className="text-3xl font-black text-white mb-2">
+                    ${(summary?.total_spend || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </dd>
+                  <div className="flex items-center gap-2 text-sm text-white/70">
+                    <span className="font-medium">${dailyAvgSpend.toFixed(0)}/day avg</span>
+                  </div>
+                </div>
+              </div>
 
-          {/* Net */}
-          <div className={`group relative overflow-hidden rounded-3xl shadow-2xl transform hover:-translate-y-2 transition-all duration-300 ${
-            (summary?.net || 0) >= 0
-              ? 'bg-gradient-to-br from-blue-500 to-indigo-600 hover:shadow-blue-500/50'
-              : 'bg-gradient-to-br from-orange-500 to-red-600 hover:shadow-orange-500/50'
-          }`}>
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-            <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-            <div className="relative px-8 py-8">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-4">Net</dt>
-              <dd className="text-5xl font-black text-white mb-3">
-                ${summary?.net?.toFixed(2) || '0.00'}
-              </dd>
-              <div className="text-sm font-semibold text-white/70">Income - Spending</div>
-            </div>
-          </div>
+              {/* Total Income */}
+              <div className="group relative overflow-hidden bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl shadow-xl hover:shadow-emerald-500/40 transform hover:-translate-y-1 transition-all duration-300">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12"></div>
+                <div className="relative px-6 py-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <dt className="text-xs font-bold text-white/80 uppercase tracking-wider">Income</dt>
+                    <span className="text-2xl">💰</span>
+                  </div>
+                  <dd className="text-3xl font-black text-white mb-2">
+                    ${(summary?.total_income || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </dd>
+                  <div className="flex items-center gap-2 text-sm text-white/70">
+                    <span className="font-medium">In selected range</span>
+                  </div>
+                </div>
+              </div>
 
-          {/* Range Total */}
-          <div className="group relative overflow-hidden bg-gradient-to-br from-purple-500 to-violet-600 rounded-3xl shadow-2xl hover:shadow-purple-500/50 transform hover:-translate-y-2 transition-all duration-300">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-            <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-            <div className="relative px-8 py-8">
-              <dt className="text-sm font-bold text-white/80 uppercase tracking-wider mb-4">{selectedYear} Total</dt>
-              <dd className="text-5xl font-black text-white mb-3">
-                ${(yearlySummary?.total_spend || 0).toFixed(2)}
-              </dd>
-              <div className="text-sm font-semibold text-white/70">Full year spending</div>
+              {/* Net */}
+              <div className={`group relative overflow-hidden rounded-2xl shadow-xl transform hover:-translate-y-1 transition-all duration-300 ${
+                (summary?.net || 0) >= 0
+                  ? 'bg-gradient-to-br from-blue-500 to-indigo-600 hover:shadow-blue-500/40'
+                  : 'bg-gradient-to-br from-orange-500 to-red-600 hover:shadow-orange-500/40'
+              }`}>
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12"></div>
+                <div className="relative px-6 py-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <dt className="text-xs font-bold text-white/80 uppercase tracking-wider">Net Savings</dt>
+                    <span className="text-2xl">{(summary?.net || 0) >= 0 ? '📈' : '📉'}</span>
+                  </div>
+                  <dd className="text-3xl font-black text-white mb-2">
+                    {(summary?.net || 0) >= 0 ? '+' : ''}{(summary?.net || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </dd>
+                  <div className="flex items-center gap-2 text-sm text-white/70">
+                    <span className="font-medium">
+                      {(summary?.net || 0) >= 0 ? 'Saved this period' : 'Overspent this period'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary Stats */}
+              <div className="group relative overflow-hidden bg-gradient-to-br from-slate-700 to-slate-900 rounded-2xl shadow-xl hover:shadow-slate-500/40 transform hover:-translate-y-1 transition-all duration-300">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-12 -mt-12"></div>
+                <div className="relative px-6 py-6">
+                  <div className="flex items-center justify-between mb-3">
+                    <dt className="text-xs font-bold text-white/80 uppercase tracking-wider">Quick Stats</dt>
+                    <span className="text-2xl">📊</span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/70">Categories</span>
+                      <span className="text-lg font-bold text-white">{categoryCount}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/70">Days</span>
+                      <span className="text-lg font-bold text-white">{daysInRange}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-white/70">Year Total</span>
+                      <span className="text-lg font-bold text-white">${((yearlySummary?.total_spend || 0) / 1000).toFixed(1)}k</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Yearly Bar Chart */}
         {yearlySummary?.monthly_data && yearlySummary.monthly_data.length > 0 && (() => {
@@ -663,16 +738,86 @@ export default function Dashboard() {
           )}
         </div>
 
+        {/* Quick Insights Section */}
+        {summary?.category_breakdown && summary.category_breakdown.length > 0 && (() => {
+          const sortedCategories = [...summary.category_breakdown].sort((a, b) => b.amount - a.amount);
+          const topCategory = sortedCategories[0];
+          const topMerchant = topMerchants[0];
+          const savingsRate = summary.total_income > 0
+            ? ((summary.net / summary.total_income) * 100).toFixed(1)
+            : '0';
+
+          // Calculate days in range
+          const start = new Date(startDate);
+          const end = new Date(endDate);
+          const daysInRange = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+          const dailyAvgSpend = summary.total_spend / daysInRange;
+
+          return (
+            <div className="bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 backdrop-blur-xl rounded-3xl border border-white/50 p-8 mb-10">
+              <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+                <span>💡</span> Quick Insights
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Top Category */}
+                {topCategory && (
+                  <div className="bg-white/80 rounded-2xl p-5 border border-gray-100">
+                    <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Top Category</div>
+                    <div className="text-lg font-bold text-gray-900">{topCategory.category || 'Uncategorized'}</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      ${topCategory.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} ({topCategory.percentage.toFixed(1)}%)
+                    </div>
+                  </div>
+                )}
+
+                {/* Top Merchant */}
+                {topMerchant && (
+                  <div className="bg-white/80 rounded-2xl p-5 border border-gray-100">
+                    <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Top Merchant</div>
+                    <div className="text-lg font-bold text-gray-900 truncate">{topMerchant.merchant}</div>
+                    <div className="text-sm text-gray-600 mt-1">
+                      ${topMerchant.total.toLocaleString('en-US', { minimumFractionDigits: 2 })} ({topMerchant.count} txns)
+                    </div>
+                  </div>
+                )}
+
+                {/* Savings Rate */}
+                <div className="bg-white/80 rounded-2xl p-5 border border-gray-100">
+                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Savings Rate</div>
+                  <div className={`text-lg font-bold ${parseFloat(savingsRate) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {parseFloat(savingsRate) >= 0 ? '+' : ''}{savingsRate}%
+                  </div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    {parseFloat(savingsRate) >= 20 ? 'Great job saving!' : parseFloat(savingsRate) >= 0 ? 'Keep it up!' : 'Spending exceeds income'}
+                  </div>
+                </div>
+
+                {/* Daily Average */}
+                <div className="bg-white/80 rounded-2xl p-5 border border-gray-100">
+                  <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Daily Average</div>
+                  <div className="text-lg font-bold text-gray-900">
+                    ${dailyAvgSpend.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <div className="text-sm text-gray-600 mt-1">
+                    Over {daysInRange} days
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Empty State */}
         {(!summary?.category_breakdown || summary.category_breakdown.length === 0) && (
           <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-16 text-center">
+            <div className="text-6xl mb-6">📊</div>
             <h3 className="text-2xl font-bold text-gray-900 mb-3">No transactions yet</h3>
-            <p className="text-gray-600 mb-8 text-lg">Get started by importing your transaction data</p>
+            <p className="text-gray-600 mb-8 text-lg max-w-md mx-auto">Get started by importing your transaction data to see your spending insights</p>
             <a
               href="/imports"
-              className="inline-flex items-center px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-lg rounded-2xl hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-2xl hover:shadow-indigo-500/50"
+              className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-lg rounded-2xl hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-2xl hover:shadow-indigo-500/50"
             >
-              Import Transactions
+              <span>📤</span> Import Transactions
             </a>
           </div>
         )}

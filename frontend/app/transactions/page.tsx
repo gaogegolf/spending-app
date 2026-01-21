@@ -70,6 +70,9 @@ export default function TransactionsPage() {
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
+  // Filter panel state
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
+
   useEffect(() => {
     loadAccounts();
   }, []);
@@ -417,6 +420,71 @@ export default function TransactionsPage() {
     }
   }
 
+  // Category color mapping for visual distinction
+  function getCategoryColor(category: string | null): string {
+    if (!category) return 'bg-gray-100 text-gray-700';
+
+    const colors: Record<string, string> = {
+      'Groceries': 'bg-green-100 text-green-700',
+      'Restaurants': 'bg-orange-100 text-orange-700',
+      'Entertainment': 'bg-purple-100 text-purple-700',
+      'Travel': 'bg-blue-100 text-blue-700',
+      'Gasoline/Fuel': 'bg-amber-100 text-amber-700',
+      'Automotive': 'bg-slate-100 text-slate-700',
+      'Healthcare/Medical': 'bg-red-100 text-red-700',
+      'Insurance': 'bg-indigo-100 text-indigo-700',
+      'Utilities': 'bg-cyan-100 text-cyan-700',
+      'Rent': 'bg-rose-100 text-rose-700',
+      'Mortgages': 'bg-pink-100 text-pink-700',
+      'Education': 'bg-violet-100 text-violet-700',
+      'Clothing/Shoes': 'bg-fuchsia-100 text-fuchsia-700',
+      'Electronics': 'bg-sky-100 text-sky-700',
+      'General Merchandise': 'bg-teal-100 text-teal-700',
+      'Online Services': 'bg-emerald-100 text-emerald-700',
+      'Dues & Subscriptions': 'bg-lime-100 text-lime-700',
+      'Personal Care': 'bg-yellow-100 text-yellow-700',
+      'Gifts': 'bg-red-50 text-red-600',
+      'Taxes': 'bg-gray-200 text-gray-700',
+      'Paychecks/Salary': 'bg-green-200 text-green-800',
+      'Interest': 'bg-blue-50 text-blue-600',
+      'Transfers': 'bg-slate-200 text-slate-700',
+    };
+
+    return colors[category] || 'bg-gray-100 text-gray-700';
+  }
+
+  // Get active filter count and descriptions
+  function getActiveFilters(): { count: number; filters: { label: string; value: string; clear: () => void }[] } {
+    const filters: { label: string; value: string; clear: () => void }[] = [];
+
+    if (startDate) {
+      filters.push({ label: 'From', value: formatDateDisplay(startDate), clear: () => setStartDate('') });
+    }
+    if (endDate) {
+      filters.push({ label: 'Until', value: formatDateDisplay(endDate), clear: () => setEndDate('') });
+    }
+    if (accountFilter) {
+      const accountName = accounts.find(a => a.id === accountFilter)?.name || accountFilter;
+      filters.push({ label: 'Account', value: accountName, clear: () => setAccountFilter('') });
+    }
+    if (typeFilter) {
+      filters.push({ label: 'Type', value: typeFilter.charAt(0) + typeFilter.slice(1).toLowerCase(), clear: () => setTypeFilter('') });
+    }
+    if (categoryFilter) {
+      filters.push({ label: 'Category', value: categoryFilter, clear: () => setCategoryFilter('') });
+    }
+    if (descriptionFilter) {
+      filters.push({ label: 'Description', value: descriptionFilter, clear: () => setDescriptionFilter('') });
+    }
+    if (groupBy !== 'none') {
+      filters.push({ label: 'Grouped by', value: groupBy.charAt(0).toUpperCase() + groupBy.slice(1), clear: () => setGroupBy('none') });
+    }
+
+    return { count: filters.length, filters };
+  }
+
+  const activeFilters = getActiveFilters();
+
   function handleSort(column: SortColumn) {
     if (sortColumn === column) {
       // Toggle direction if same column
@@ -512,6 +580,15 @@ export default function TransactionsPage() {
     });
   }
 
+  function expandAllGroups() {
+    setCollapsedGroups(new Set());
+  }
+
+  function collapseAllGroups() {
+    const allKeys = groupedTransactions.map(g => g.key);
+    setCollapsedGroups(new Set(allKeys));
+  }
+
   // Group transactions
   const groupedTransactions = useMemo(() => {
     if (groupBy === 'none') {
@@ -590,199 +667,287 @@ export default function TransactionsPage() {
       )}
 
       {/* Filters */}
-      <div className="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 className="text-lg font-medium text-gray-900 mb-4">Filters</h2>
-
-        {/* Date Range Presets */}
-        <div className="mb-4 pb-4 border-b border-gray-200">
-          <label htmlFor="date-preset" className="block text-sm font-medium text-gray-700 mb-2">
-            Quick Date Range
-          </label>
-          <select
-            id="date-preset"
-            onChange={(e) => {
-              if (e.target.value) {
-                setDatePreset(e.target.value as any);
-              }
-            }}
-            defaultValue=""
-            className="block w-full sm:w-64 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-          >
-            <option value="">Select a date range...</option>
-            <option value="this_month">This Month</option>
-            <option value="last_month">Last Month</option>
-            <option value="last_3_months">Last 3 Months</option>
-            <option value="last_6_months">Last 6 Months</option>
-            <option value="this_year">This Year</option>
-            <option value="last_year">Last Year</option>
-          </select>
+      <div className="bg-white shadow rounded-lg overflow-hidden mb-6">
+        {/* Filter Header - Always visible */}
+        <div
+          className="px-6 py-4 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100 cursor-pointer hover:bg-gray-50 transition-colors"
+          onClick={() => setFiltersExpanded(!filtersExpanded)}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-indigo-100 transition-transform duration-200 ${filtersExpanded ? 'rotate-90' : ''}`}>
+                <span className="text-indigo-600 text-sm font-bold">▶</span>
+              </div>
+              <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+              {activeFilters.count > 0 && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                  {activeFilters.count} active
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              {activeFilters.count > 0 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    resetFilters();
+                    setGroupBy('none');
+                  }}
+                  className="text-sm text-gray-500 hover:text-red-600 transition-colors"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-          {/* Start Date */}
-          <div>
-            <label htmlFor="start-date" className="block text-sm font-medium text-gray-700 mb-1">
-              Start Date
-            </label>
-            <input
-              type="date"
-              id="start-date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
-          </div>
-
-          {/* End Date */}
-          <div>
-            <label htmlFor="end-date" className="block text-sm font-medium text-gray-700 mb-1">
-              End Date
-            </label>
-            <input
-              type="date"
-              id="end-date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
-          </div>
-
-          {/* Account Filter */}
-          <div>
-            <label htmlFor="account-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Account
-            </label>
-            <select
-              id="account-filter"
-              value={accountFilter}
-              onChange={(e) => {
-                setAccountFilter(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All Accounts</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.name}
-                </option>
+        {/* Active Filter Chips - Show when filters are collapsed but active */}
+        {!filtersExpanded && activeFilters.count > 0 && (
+          <div className="px-6 py-3 bg-gray-50 border-b border-gray-100">
+            <div className="flex flex-wrap gap-2">
+              {activeFilters.filters.map((filter, index) => (
+                <span
+                  key={index}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-white border border-gray-200 text-gray-700 shadow-sm"
+                >
+                  <span className="text-gray-500 text-xs">{filter.label}:</span>
+                  <span className="font-medium">{filter.value}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      filter.clear();
+                    }}
+                    className="ml-1 text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    ×
+                  </button>
+                </span>
               ))}
-            </select>
+            </div>
           </div>
+        )}
 
-          {/* Type Filter */}
-          <div>
-            <label htmlFor="type-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Type
-            </label>
-            <select
-              id="type-filter"
-              value={typeFilter}
-              onChange={(e) => {
-                setTypeFilter(e.target.value);
-                setCategoryFilter(''); // Clear category when type changes
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All Types</option>
-              {TRANSACTION_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type.charAt(0) + type.slice(1).toLowerCase()}
-                </option>
-              ))}
-            </select>
+        {/* Filter Content - Collapsible */}
+        {filtersExpanded && (
+          <div className="p-6">
+            {/* Quick Date Presets */}
+            <div className="mb-6">
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+                Quick Date Range
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: 'this_month', label: 'This Month' },
+                  { value: 'last_month', label: 'Last Month' },
+                  { value: 'last_3_months', label: 'Last 3 Months' },
+                  { value: 'last_6_months', label: 'Last 6 Months' },
+                  { value: 'this_year', label: 'This Year' },
+                  { value: 'last_year', label: 'Last Year' },
+                ].map((preset) => (
+                  <button
+                    key={preset.value}
+                    onClick={() => setDatePreset(preset.value as any)}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-indigo-100 hover:text-indigo-700 rounded-lg transition-all"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Filter Grid */}
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+              {/* Date Range Section */}
+              <div className="sm:col-span-2 lg:col-span-2">
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Date Range
+                </label>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <input
+                      type="date"
+                      id="start-date"
+                      value={startDate}
+                      onChange={(e) => {
+                        setStartDate(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                      placeholder="Start date"
+                    />
+                  </div>
+                  <div className="flex items-center text-gray-400">
+                    <span>→</span>
+                  </div>
+                  <div className="flex-1">
+                    <input
+                      type="date"
+                      id="end-date"
+                      value={endDate}
+                      onChange={(e) => {
+                        setEndDate(e.target.value);
+                        setPage(1);
+                      }}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                      placeholder="End date"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Account Filter */}
+              <div>
+                <label htmlFor="account-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Account
+                </label>
+                <select
+                  id="account-filter"
+                  value={accountFilter}
+                  onChange={(e) => {
+                    setAccountFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="">All Accounts</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Description Search */}
+              <div>
+                <label htmlFor="description-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Search
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    id="description-filter"
+                    value={descriptionFilter}
+                    onChange={(e) => {
+                      setDescriptionFilter(e.target.value);
+                      setPage(1);
+                    }}
+                    placeholder="Search description..."
+                    className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                  />
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+                    🔍
+                  </span>
+                </div>
+              </div>
+
+              {/* Type Filter */}
+              <div>
+                <label htmlFor="type-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Type
+                </label>
+                <select
+                  id="type-filter"
+                  value={typeFilter}
+                  onChange={(e) => {
+                    setTypeFilter(e.target.value);
+                    setCategoryFilter('');
+                    setPage(1);
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="">All Types</option>
+                  {TRANSACTION_TYPES.map((type) => (
+                    <option key={type} value={type}>
+                      {type.charAt(0) + type.slice(1).toLowerCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Category Filter */}
+              <div>
+                <label htmlFor="category-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Category
+                </label>
+                <select
+                  id="category-filter"
+                  value={categoryFilter}
+                  onChange={(e) => {
+                    setCategoryFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="">All Categories</option>
+                  {getCategoriesForType(typeFilter).map((cat) => (
+                    <option key={cat.id} value={cat.name}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Group By */}
+              <div>
+                <label htmlFor="group-by" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Group By
+                </label>
+                <select
+                  id="group-by"
+                  value={groupBy}
+                  onChange={(e) => {
+                    setGroupBy(e.target.value as GroupBy);
+                    setCollapsedGroups(new Set());
+                  }}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <option value="none">No Grouping</option>
+                  <option value="merchant">Merchant</option>
+                  <option value="category">Category</option>
+                  <option value="type">Type</option>
+                  <option value="account">Account</option>
+                  <option value="month">Month</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Active Filters Display (when expanded) */}
+            {activeFilters.count > 0 && (
+              <div className="mt-5 pt-5 border-t border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap gap-2">
+                    {activeFilters.filters.map((filter, index) => (
+                      <span
+                        key={index}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm bg-indigo-50 border border-indigo-100 text-indigo-700"
+                      >
+                        <span className="text-indigo-400 text-xs">{filter.label}:</span>
+                        <span className="font-medium">{filter.value}</span>
+                        <button
+                          onClick={() => filter.clear()}
+                          className="ml-1 text-indigo-400 hover:text-red-500 transition-colors"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => {
+                      resetFilters();
+                      setGroupBy('none');
+                    }}
+                    className="text-sm text-gray-500 hover:text-red-600 font-medium transition-colors"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* Category Filter */}
-          <div>
-            <label htmlFor="category-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Category
-            </label>
-            <select
-              id="category-filter"
-              value={categoryFilter}
-              onChange={(e) => {
-                setCategoryFilter(e.target.value);
-                setPage(1);
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="">All Categories</option>
-              {getCategoriesForType(typeFilter).map((cat) => (
-                <option key={cat.id} value={cat.name}>
-                  {cat.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Description Filter */}
-          <div>
-            <label htmlFor="description-filter" className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
-            <input
-              type="text"
-              id="description-filter"
-              value={descriptionFilter}
-              onChange={(e) => {
-                setDescriptionFilter(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Search description..."
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            />
-          </div>
-
-          {/* Group By */}
-          <div>
-            <label htmlFor="group-by" className="block text-sm font-medium text-gray-700 mb-1">
-              Group By
-            </label>
-            <select
-              id="group-by"
-              value={groupBy}
-              onChange={(e) => {
-                setGroupBy(e.target.value as GroupBy);
-                setCollapsedGroups(new Set());
-              }}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm"
-            >
-              <option value="none">None</option>
-              <option value="merchant">Merchant</option>
-              <option value="category">Category</option>
-              <option value="type">Type</option>
-              <option value="account">Account</option>
-              <option value="month">Month</option>
-            </select>
-          </div>
-
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <button
-            onClick={resetFilters}
-            className="text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-          >
-            Reset All Filters
-          </button>
-          {(startDate || endDate) && (
-            <span className="text-sm text-gray-600">
-              {startDate && endDate
-                ? `${formatDateDisplay(startDate)} - ${formatDateDisplay(endDate)}`
-                : startDate
-                ? `From ${formatDateDisplay(startDate)}`
-                : `Until ${formatDateDisplay(endDate)}`}
-            </span>
-          )}
-        </div>
+        )}
       </div>
 
       {/* Rule Filter Indicator */}
@@ -868,11 +1033,30 @@ export default function TransactionsPage() {
             </div>
 
             {/* Net Amount */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">Net Amount:</span>
-              <span className={`text-lg font-bold ${calculateDisplayedTotal() >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {calculateDisplayedTotal() >= 0 ? '+' : '-'}${Math.abs(calculateDisplayedTotal()).toFixed(2)}
-              </span>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-600">Net Amount:</span>
+                <span className={`text-lg font-bold ${calculateDisplayedTotal() >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {calculateDisplayedTotal() >= 0 ? '+' : '-'}${Math.abs(calculateDisplayedTotal()).toFixed(2)}
+                </span>
+              </div>
+              {/* Expand/Collapse All Buttons */}
+              {groupBy !== 'none' && (
+                <div className="flex items-center gap-2 border-l border-gray-200 pl-4">
+                  <button
+                    onClick={expandAllGroups}
+                    className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                  >
+                    Expand All
+                  </button>
+                  <button
+                    onClick={collapseAllGroups}
+                    className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    Collapse All
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1021,33 +1205,39 @@ export default function TransactionsPage() {
                     {/* Group Header Row */}
                     {groupBy !== 'none' && (
                       <tr
-                        className="bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        className="bg-gradient-to-r from-indigo-50 to-purple-50 cursor-pointer hover:from-indigo-100 hover:to-purple-100 transition-all duration-200 border-l-4 border-indigo-500"
                         onClick={() => toggleGroup(group.key)}
                       >
-                        <td colSpan={8} className="px-6 py-3">
+                        <td colSpan={8} className="px-6 py-4">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              <span className="text-indigo-600 text-sm">
-                                {collapsedGroups.has(group.key) ? '▶' : '▼'}
-                              </span>
-                              <span className="font-semibold text-gray-900">
-                                {group.label}
-                              </span>
-                              <span className="text-sm text-gray-500 bg-white px-2 py-0.5 rounded-full">
-                                {group.count} transaction{group.count !== 1 ? 's' : ''}
+                            <div className="flex items-center gap-4">
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-transform duration-200 ${collapsedGroups.has(group.key) ? '' : 'rotate-90'} bg-indigo-100`}>
+                                <span className="text-indigo-600 text-sm font-bold">▶</span>
+                              </div>
+                              <div>
+                                <span className="font-bold text-gray-900 text-lg">
+                                  {group.label}
+                                </span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <span className="text-xs text-gray-500 bg-white/80 px-2 py-0.5 rounded-full border border-gray-200">
+                                    {group.count} transaction{group.count !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="font-bold text-xl text-gray-900">
+                                ${group.total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             </div>
-                            <span className="font-semibold text-gray-900">
-                              ${group.total.toFixed(2)}
-                            </span>
                           </div>
                         </td>
                       </tr>
                     )}
                     {/* Transaction Rows */}
                     {!collapsedGroups.has(group.key) && group.transactions.map((transaction) => (
-                  <tr key={transaction.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-4">
+                  <tr key={transaction.id} className={`hover:bg-gray-50 transition-colors ${groupBy !== 'none' ? 'bg-white' : ''}`}>
+                    <td className={`px-4 py-4 ${groupBy !== 'none' ? 'pl-6' : ''}`}>
                       <input
                         type="checkbox"
                         checked={selectedIds.has(transaction.id)}
@@ -1118,13 +1308,15 @@ export default function TransactionsPage() {
                       ) : (
                         <button
                           onClick={() => setEditingCategoryId(transaction.id)}
-                          className="text-left hover:text-indigo-600 hover:underline focus:outline-none focus:text-indigo-600 w-full"
+                          className="focus:outline-none group"
                           title="Click to change category"
                         >
-                          {transaction.category || '-'}
-                          {transaction.classification_method === 'LEARNED' && (
-                            <span className="ml-1 text-xs text-green-600" title="Learned from your edits">✓</span>
-                          )}
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getCategoryColor(transaction.category)} group-hover:ring-2 group-hover:ring-indigo-300 transition-all`}>
+                            {transaction.category || 'Uncategorized'}
+                            {transaction.classification_method === 'LEARNED' && (
+                              <span className="ml-1 text-green-600" title="Learned from your edits">✓</span>
+                            )}
+                          </span>
                         </button>
                       )}
                     </td>
@@ -1156,9 +1348,16 @@ export default function TransactionsPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                      <span className={transaction.is_spend ? 'text-red-600' : transaction.is_income ? 'text-green-600' : 'text-gray-900'}>
-                        {transaction.is_income ? '+' : ''}${Math.abs(parseFloat(transaction.amount)).toFixed(2)}
+                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                      <span className={`font-semibold text-base ${
+                        transaction.is_spend
+                          ? 'text-red-600'
+                          : transaction.is_income
+                            ? 'text-emerald-600'
+                            : 'text-gray-700'
+                      }`}>
+                        {transaction.is_income ? '+' : transaction.is_spend ? '-' : ''}
+                        ${Math.abs(parseFloat(transaction.amount)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-center">
