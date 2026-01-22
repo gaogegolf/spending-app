@@ -27,6 +27,7 @@ class AccountUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     institution: Optional[str] = Field(None, max_length=255)
+    account_type: Optional[AccountType] = Field(None, description="Type of account (must stay in same category)")
     account_number_last4: Optional[str] = Field(None, min_length=4, max_length=4)
     is_active: Optional[bool] = None
 
@@ -39,6 +40,12 @@ class AccountResponse(AccountBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    # Bank account stats
+    transaction_count: int = 0  # Number of transactions
+    import_count: int = 0  # Number of statements imported
+    # Investment account stats
+    snapshot_count: int = 0  # Number of holdings snapshots
+    position_count: int = 0  # Number of positions in latest snapshot
 
     class Config:
         from_attributes = True  # Pydantic v2 (was orm_mode in v1)

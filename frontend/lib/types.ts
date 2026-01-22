@@ -1,5 +1,5 @@
 // Account types
-export type AccountType = 'CREDIT_CARD' | 'CHECKING' | 'SAVINGS' | 'INVESTMENT' | 'OTHER';
+export type AccountType = 'CREDIT_CARD' | 'CHECKING' | 'SAVINGS' | 'INVESTMENT' | 'OTHER' | 'BROKERAGE' | 'IRA_ROTH' | 'IRA_TRADITIONAL' | 'RETIREMENT_401K' | 'STOCK_PLAN';
 
 export interface Account {
   id: string;
@@ -12,6 +12,12 @@ export interface Account {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Bank account stats
+  transaction_count: number;
+  import_count: number;
+  // Investment account stats
+  snapshot_count: number;
+  position_count: number;
 }
 
 // Transaction types
@@ -145,4 +151,74 @@ export interface Rule {
 export interface RuleListResponse {
   rules: Rule[];
   total: number;
+}
+
+// Brokerage/Investment types
+export type PositionType = 'STOCK' | 'ETF' | 'MUTUAL_FUND' | 'BOND' | 'CASH' | 'MONEY_MARKET' | 'RSU' | 'ESPP' | 'OPTION' | 'OTHER';
+export type AssetClass = 'EQUITY' | 'FIXED_INCOME' | 'CASH' | 'ALTERNATIVE' | 'UNKNOWN';
+
+export interface Position {
+  id: string;
+  symbol: string | null;
+  security_name: string;
+  security_type: PositionType;
+  quantity: number | null;
+  price: number | null;
+  market_value: number;
+  cost_basis: number | null;
+  asset_class: AssetClass;
+}
+
+export interface HoldingsSnapshot {
+  id: string;
+  account_id: string;
+  account_name: string;
+  account_type: AccountType;
+  statement_date: string;
+  total_value: number;
+  total_cash: number;
+  total_securities: number;
+  is_reconciled: boolean;
+  position_count: number;
+  positions?: Position[];
+}
+
+export interface NetWorthData {
+  current_total: number;
+  accounts: {
+    account_id: string;
+    account_name: string;
+    account_type: string;
+    latest_value: number;
+    statement_date: string;
+  }[];
+  history: {
+    date: string;
+    total: number;
+  }[];
+}
+
+export interface BrokerageParseResult {
+  import_id: string;
+  provider: string;
+  account_type: string;
+  account_identifier: string;
+  statement_date: string | null;
+  total_value: number;
+  total_cash: number;
+  total_securities: number;
+  calculated_total: number;
+  is_reconciled: boolean;
+  reconciliation_diff: number;
+  positions: {
+    symbol: string | null;
+    security_name: string;
+    security_type: string;
+    quantity: number | null;
+    price: number | null;
+    market_value: number;
+    cost_basis: number | null;
+    asset_class: string;
+  }[];
+  warnings: string[];
 }

@@ -48,6 +48,7 @@ class ImportRecord(Base):
     # Relationships
     account = relationship("Account", back_populates="imports")
     transactions = relationship("Transaction", back_populates="import_record")
+    holdings_snapshot = relationship("HoldingsSnapshot", back_populates="import_record", uselist=False)
 
     def __repr__(self):
         return f"<ImportRecord(id={self.id}, filename='{self.filename}', status={self.status})>"

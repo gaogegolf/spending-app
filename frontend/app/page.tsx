@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getYearlySummary, getMerchantAnalysis, getAccounts, getDateRangeSummary } from '@/lib/api';
-import { Account } from '@/lib/types';
+import Link from 'next/link';
+import { getYearlySummary, getMerchantAnalysis, getAccounts, getDateRangeSummary, getNetWorth } from '@/lib/api';
+import { Account, NetWorthData } from '@/lib/types';
 
 interface MonthlySummary {
   total_spend: number;
@@ -54,6 +55,7 @@ export default function Dashboard() {
   const [selectedAccount, setSelectedAccount] = useState<string>(searchParams.get('account_id') || '');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [netWorth, setNetWorth] = useState<NetWorthData | null>(null);
 
   // Date range filter - initialize from URL params
   const [startDate, setStartDate] = useState(searchParams.get('start_date') || defaultStartDate);
@@ -116,6 +118,15 @@ export default function Dashboard() {
       // Merchant analysis for range
       const merchantData = await getMerchantAnalysis(startDate, endDate, 100);
       setTopMerchants(merchantData.top_merchants || []);
+
+      // Net worth data from brokerage accounts
+      try {
+        const netWorthData = await getNetWorth();
+        setNetWorth(netWorthData);
+      } catch {
+        // Net worth data is optional - don't fail if no brokerage accounts exist
+        setNetWorth(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -424,6 +435,29 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+
+              {/* Net Worth - only show if brokerage data exists */}
+              {netWorth && netWorth.current_total > 0 && (
+                <Link href="/investments" className="block">
+                  <div className="group relative overflow-hidden bg-gradient-to-br from-violet-500 to-purple-700 rounded-2xl shadow-xl hover:shadow-violet-500/40 transform hover:-translate-y-1 transition-all duration-300 cursor-pointer">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12"></div>
+                    <div className="relative px-6 py-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <dt className="text-xs font-bold text-white/80 uppercase tracking-wider">Net Worth</dt>
+                        <span className="text-2xl">🏦</span>
+                      </div>
+                      <dd className="text-3xl font-black text-white mb-2">
+                        ${netWorth.current_total.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </dd>
+                      <div className="flex items-center gap-2 text-sm text-white/70">
+                        <span className="font-medium">{netWorth.accounts.length} account{netWorth.accounts.length !== 1 ? 's' : ''}</span>
+                        <span className="text-white/50">·</span>
+                        <span className="font-medium group-hover:text-white transition-colors">View details &rarr;</span>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              )}
             </div>
           );
         })()}

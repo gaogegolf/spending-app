@@ -12,11 +12,18 @@ from app.database import Base
 class AccountType(str, enum.Enum):
     """Types of accounts."""
 
+    # Traditional banking
     CREDIT_CARD = "CREDIT_CARD"
     CHECKING = "CHECKING"
     SAVINGS = "SAVINGS"
     INVESTMENT = "INVESTMENT"
     OTHER = "OTHER"
+    # Brokerage accounts
+    BROKERAGE = "BROKERAGE"  # Taxable brokerage
+    IRA_ROTH = "IRA_ROTH"  # Roth IRA
+    IRA_TRADITIONAL = "IRA_TRADITIONAL"  # Traditional IRA
+    RETIREMENT_401K = "RETIREMENT_401K"  # 401(k) plans
+    STOCK_PLAN = "STOCK_PLAN"  # RSU/ESPP plans
 
 
 class Account(Base):
@@ -38,6 +45,7 @@ class Account(Base):
     # Relationships
     imports = relationship("ImportRecord", back_populates="account", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="account", cascade="all, delete-orphan")
+    holdings_snapshots = relationship("HoldingsSnapshot", back_populates="account", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Account(id={self.id}, name='{self.name}', type={self.account_type})>"

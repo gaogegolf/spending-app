@@ -1,10 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAccounts, uploadFile, parseImport, commitImport, getImportStatus, createAccount } from '@/lib/api';
-import { Account, ImportRecord, AccountType } from '@/lib/types';
+import {
+  getAccounts,
+  uploadFile,
+  parseImport,
+  commitImport,
+  createAccount,
+  uploadBrokerageStatement,
+  parseBrokerageStatement,
+  commitBrokerageImport,
+} from '@/lib/api';
+import { Account, ImportRecord, AccountType, BrokerageParseResult } from '@/lib/types';
 
-const ACCOUNT_TYPES: AccountType[] = ['CREDIT_CARD', 'CHECKING', 'SAVINGS', 'INVESTMENT', 'OTHER'];
+const BANK_ACCOUNT_TYPES: AccountType[] = ['CREDIT_CARD', 'CHECKING', 'SAVINGS', 'OTHER'];
+const BROKERAGE_ACCOUNT_TYPES: AccountType[] = ['BROKERAGE', 'IRA_ROTH', 'IRA_TRADITIONAL', 'RETIREMENT_401K', 'STOCK_PLAN'];
+
+type ImportType = 'transactions' | 'brokerage';
 
 export default function ImportsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -14,7 +26,19 @@ export default function ImportsPage() {
   const [importRecords, setImportRecords] = useState<ImportRecord[]>([]);
   const [currentFileIndex, setCurrentFileIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [step, setStep] = useState<'select' | 'upload' | 'processing' | 'complete'>('select');
+  const [step, setStep] = useState<'select' | 'upload' | 'processing' | 'preview' | 'complete'>('select');
+
+  // Import type selection
+  const [importType, setImportType] = useState<ImportType>('transactions');
+
+  // Brokerage import state
+  const [brokerageParseResult, setBrokerageParseResult] = useState<BrokerageParseResult | null>(null);
+  const [brokerageImportId, setBrokerageImportId] = useState<string | null>(null);
+  const [brokerageResult, setBrokerageResult] = useState<{
+    account_name: string;
+    total_value: number;
+    position_count: number;
+  } | null>(null);
 
   // New account modal state
   const [showNewAccountModal, setShowNewAccountModal] = useState(false);
@@ -56,11 +80,9 @@ export default function ImportsPage() {
         account_number_last4: newAccountLast4.trim() || undefined,
       });
 
-      // Add to accounts list and select it
       setAccounts([...accounts, newAccount]);
       setSelectedAccount(newAccount.id);
 
-      // Reset modal state
       setShowNewAccountModal(false);
       setNewAccountName('');
       setNewAccountType('CREDIT_CARD');
@@ -75,17 +97,16 @@ export default function ImportsPage() {
 
   function handleAccountChange(value: string) {
     if (value === '__new__') {
+      // Set default account type based on import type
+      setNewAccountType(importType === 'brokerage' ? 'BROKERAGE' : 'CREDIT_CARD');
       setShowNewAccountModal(true);
     } else {
       setSelectedAccount(value);
     }
   }
 
-  async function handleFileUpload(e: React.FormEvent) {
-    e.preventDefault();
-
-    console.log('Form submitted', { selectedAccount, filesCount: files.length });
-
+  // Handle transaction import (existing flow)
+  async function handleTransactionImport() {
     if (!selectedAccount || files.length === 0) {
       setError('Please select an account and at least one file');
       return;
@@ -99,29 +120,17 @@ export default function ImportsPage() {
 
       const results: ImportRecord[] = [];
 
-      // Process each file sequentially
       for (let i = 0; i < files.length; i++) {
         setCurrentFileIndex(i);
         const file = files[i];
 
-        console.log(`Processing file ${i + 1}/${files.length}:`, file.name);
-
         try {
-          // Upload file
-          console.log('Uploading file...');
           const uploadResult = await uploadFile(selectedAccount, file);
-          console.log('Upload result:', uploadResult);
-
-          // Parse file
           setStep('processing');
-          console.log('Parsing file...');
           const parseResult = await parseImport(uploadResult.id);
-          console.log('Parse result:', parseResult);
 
-          // Check if parsing was successful
           if (parseResult.success === false || parseResult.errors?.length > 0) {
             const errorMsg = parseResult.errors ? parseResult.errors.join(', ') : 'Failed to parse file';
-            console.error('Parse failed:', errorMsg);
             results.push({
               id: uploadResult.id,
               filename: file.name,
@@ -133,13 +142,9 @@ export default function ImportsPage() {
             continue;
           }
 
-          // Commit import
-          console.log('Committing import...');
           const commitResult = await commitImport(uploadResult.id);
-          console.log('Commit result:', commitResult);
           results.push(commitResult);
         } catch (err) {
-          console.error('File processing error:', err);
           results.push({
             id: '',
             filename: file.name,
@@ -154,11 +159,79 @@ export default function ImportsPage() {
       setImportRecords(results);
       setStep('complete');
     } catch (err) {
-      console.error('Import error:', err);
       setError(err instanceof Error ? err.message : 'Import failed');
       setStep('select');
     } finally {
       setImporting(false);
+    }
+  }
+
+  // Handle brokerage import
+  async function handleBrokerageImport() {
+    if (!selectedAccount) {
+      setError('Please select a brokerage account first');
+      return;
+    }
+    if (files.length === 0) {
+      setError('Please select a brokerage statement PDF');
+      return;
+    }
+
+    try {
+      setImporting(true);
+      setError(null);
+      setStep('upload');
+
+      const file = files[0];
+
+      // Upload and detect provider
+      const uploadResult = await uploadBrokerageStatement(file, selectedAccount);
+      setBrokerageImportId(uploadResult.import_id);
+
+      // Parse and get preview
+      setStep('processing');
+      const parseResult = await parseBrokerageStatement(uploadResult.import_id);
+      setBrokerageParseResult(parseResult);
+      setStep('preview');
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process brokerage statement');
+      setStep('select');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleBrokerageCommit() {
+    if (!brokerageImportId || !selectedAccount) return;
+
+    try {
+      setImporting(true);
+      setError(null);
+
+      const result = await commitBrokerageImport(brokerageImportId, {
+        accountId: selectedAccount,
+        createAccount: false
+      });
+      setBrokerageResult({
+        account_name: result.account_name,
+        total_value: result.total_value,
+        position_count: result.position_count,
+      });
+      setStep('complete');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to commit import');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function handleFileUpload(e: React.FormEvent) {
+    e.preventDefault();
+    if (importType === 'transactions') {
+      await handleTransactionImport();
+    } else {
+      await handleBrokerageImport();
     }
   }
 
@@ -169,6 +242,41 @@ export default function ImportsPage() {
     setCurrentFileIndex(0);
     setError(null);
     setStep('select');
+    setBrokerageParseResult(null);
+    setBrokerageImportId(null);
+    setBrokerageResult(null);
+  }
+
+  function formatCurrency(value: number): string {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(value);
+  }
+
+  function formatDate(dateStr: string): string {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  function getAccountTypeLabel(type: string): string {
+    const labels: Record<string, string> = {
+      // Bank account types
+      'CREDIT_CARD': 'Credit Card',
+      'CHECKING': 'Checking',
+      'SAVINGS': 'Savings',
+      'OTHER': 'Other',
+      // Brokerage account types
+      'BROKERAGE': 'Brokerage',
+      'IRA_ROTH': 'Roth IRA',
+      'IRA_TRADITIONAL': 'Traditional IRA',
+      'RETIREMENT_401K': '401(k)',
+      'STOCK_PLAN': 'Stock Plan (RSU/ESPP)',
+    };
+    return labels[type] || type;
   }
 
   return (
@@ -182,330 +290,544 @@ export default function ImportsPage() {
             </div>
             <div>
               <h1 className="text-4xl font-black bg-gradient-to-r from-gray-900 via-indigo-900 to-purple-900 bg-clip-text text-transparent">
-                Import Transactions
+                Import Statements
               </h1>
-              <p className="text-gray-600 mt-1">Upload CSV or PDF files from your bank statements</p>
+              <p className="text-gray-600 mt-1">Upload bank statements or brokerage statements</p>
             </div>
           </div>
         </div>
 
-      {/* Error Message */}
-      {error && (
-        <div className="mb-6 bg-red-50 border-l-4 border-red-500 rounded-lg p-4 shadow-sm">
-          <div className="flex items-start">
-            <span className="text-red-500 text-xl mr-3">⚠️</span>
-            <p className="text-red-800">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Step 1: Select Account and File */}
-      {step === 'select' && (
-        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
-          <form onSubmit={handleFileUpload}>
-            {/* Account Selection */}
-            <div className="mb-8">
-              <label htmlFor="account" className="block text-base font-semibold text-gray-800 mb-3">
-                1. Select Account
-              </label>
-              <select
-                id="account"
-                value={selectedAccount}
-                onChange={(e) => handleAccountChange(e.target.value)}
-                className="block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base transition-all"
-                required
-              >
-                <option value="">Choose an account...</option>
-                {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>
-                    {account.name} ({account.account_type})
-                  </option>
-                ))}
-                <option value="__new__" className="font-semibold text-indigo-600">
-                  + Create New Account
-                </option>
-              </select>
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6 bg-red-50 border-l-4 border-red-500 rounded-lg p-4 shadow-sm">
+            <div className="flex items-start">
+              <span className="text-red-500 text-xl mr-3">!</span>
+              <p className="text-red-800">{error}</p>
             </div>
+          </div>
+        )}
 
-            {/* File Upload */}
-            <div className="mb-8">
-              <label htmlFor="file" className="block text-base font-semibold text-gray-800 mb-3">
-                2. Upload File
-              </label>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-400 transition-colors">
-                <input
-                  type="file"
-                  id="file"
-                  accept=".csv,.pdf"
-                  multiple
-                  onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
-                  className="block w-full text-base text-gray-700
-                    file:mr-4 file:py-3 file:px-6
-                    file:rounded-lg file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-gradient-to-r file:from-indigo-500 file:to-purple-600
-                    file:text-white hover:file:from-indigo-600 hover:file:to-purple-700
-                    file:cursor-pointer file:transition-all"
+        {/* Step 1: Select Import Type, Account and File */}
+        {step === 'select' && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <form onSubmit={handleFileUpload}>
+              {/* Import Type Selection */}
+              <div className="mb-8">
+                <label className="block text-base font-semibold text-gray-800 mb-3">
+                  1. What are you importing?
+                </label>
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => { setImportType('transactions'); setSelectedAccount(''); }}
+                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                      importType === 'transactions'
+                        ? 'border-indigo-500 bg-indigo-50 shadow-md'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-2xl">💳</span>
+                      <span className="font-semibold text-gray-900">Bank Statement</span>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Credit cards, checking, savings accounts (CSV or PDF)
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setImportType('brokerage'); setSelectedAccount(''); }}
+                    className={`p-4 rounded-xl border-2 text-left transition-all ${
+                      importType === 'brokerage'
+                        ? 'border-emerald-500 bg-emerald-50 shadow-md'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-2xl">📈</span>
+                      <span className="font-semibold text-gray-900">Brokerage Statement</span>
+                    </div>
+                    <p className="text-sm text-gray-600">
+                      Fidelity, Schwab investment accounts (PDF only)
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Account Selection */}
+              <div className="mb-8">
+                <label htmlFor="account" className="block text-base font-semibold text-gray-800 mb-3">
+                  2. Select Account
+                </label>
+                <select
+                  id="account"
+                  value={selectedAccount}
+                  onChange={(e) => handleAccountChange(e.target.value)}
+                  className={`block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 text-base transition-all ${
+                    importType === 'brokerage'
+                      ? 'focus:ring-emerald-500 focus:border-emerald-500'
+                      : 'focus:ring-indigo-500 focus:border-indigo-500'
+                  }`}
                   required
-                />
-                {files.length > 0 && (
-                  <div className="mt-3 text-sm text-gray-700">
-                    <strong>{files.length}</strong> file{files.length !== 1 ? 's' : ''} selected
-                  </div>
+                >
+                  <option value="">Choose an account...</option>
+                  {importType === 'transactions'
+                    ? accounts.filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name} ({account.account_type.replace('_', ' ')})
+                        </option>
+                      ))
+                    : accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name} ({account.account_type.replace('_', ' ')})
+                        </option>
+                      ))
+                  }
+                  <option value="__new__" className={importType === 'brokerage' ? 'font-semibold text-emerald-600' : 'font-semibold text-indigo-600'}>
+                    + Create New Account
+                  </option>
+                </select>
+                {importType === 'brokerage' && accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).length === 0 && (
+                  <p className="mt-2 text-sm text-amber-600">
+                    No brokerage accounts yet. Create one first to import statements.
+                  </p>
                 )}
-                <p className="mt-3 text-sm text-gray-500 flex items-center">
-                  <span className="mr-2">📄</span>
-                  Supported formats: CSV, PDF (up to 10MB each). You can select multiple files.
+              </div>
+
+              {/* File Upload */}
+              <div className="mb-8">
+                <label htmlFor="file" className="block text-base font-semibold text-gray-800 mb-3">
+                  3. Upload {importType === 'brokerage' ? 'Statement' : 'File'}
+                </label>
+                <div className={`border-2 border-dashed rounded-lg p-6 hover:border-opacity-70 transition-colors ${
+                  importType === 'brokerage' ? 'border-emerald-300 hover:border-emerald-400' : 'border-gray-300 hover:border-indigo-400'
+                }`}>
+                  <input
+                    type="file"
+                    id="file"
+                    accept={importType === 'brokerage' ? '.pdf' : '.csv,.pdf'}
+                    multiple={importType === 'transactions'}
+                    onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])}
+                    className={`block w-full text-base text-gray-700
+                      file:mr-4 file:py-3 file:px-6
+                      file:rounded-lg file:border-0
+                      file:text-sm file:font-semibold
+                      file:cursor-pointer file:transition-all
+                      ${importType === 'brokerage'
+                        ? 'file:bg-gradient-to-r file:from-emerald-500 file:to-teal-600 file:text-white hover:file:from-emerald-600 hover:file:to-teal-700'
+                        : 'file:bg-gradient-to-r file:from-indigo-500 file:to-purple-600 file:text-white hover:file:from-indigo-600 hover:file:to-purple-700'
+                      }`}
+                    required
+                  />
+                  {files.length > 0 && (
+                    <div className="mt-3 text-sm text-gray-700">
+                      <strong>{files.length}</strong> file{files.length !== 1 ? 's' : ''} selected
+                      {files.map((f, i) => (
+                        <div key={i} className="text-gray-500 mt-1">• {f.name}</div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-3 text-sm text-gray-500 flex items-center">
+                    <span className="mr-2">📄</span>
+                    {importType === 'brokerage'
+                      ? 'Supported: PDF statements from Fidelity or Schwab'
+                      : 'Supported formats: CSV, PDF (up to 10MB each). You can select multiple files.'
+                    }
+                  </p>
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <button
+                type="submit"
+                disabled={importing || !selectedAccount || files.length === 0}
+                className={`w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-lg shadow-lg text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all transform hover:scale-105 ${
+                  importType === 'brokerage'
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 focus:ring-emerald-500'
+                    : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 focus:ring-indigo-500'
+                }`}
+              >
+                {importing ? (
+                  <>
+                    <span className="animate-spin mr-2">⏳</span>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <span className="mr-2">{importType === 'brokerage' ? '📈' : '🚀'}</span>
+                    {importType === 'brokerage'
+                      ? 'Import Brokerage Statement'
+                      : files.length > 0 ? `Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Import Transactions'
+                    }
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Step 2: Processing */}
+        {(step === 'upload' || step === 'processing') && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <div className="text-center">
+              <div className={`animate-spin rounded-full h-16 w-16 border-4 mx-auto mb-6 ${
+                importType === 'brokerage'
+                  ? 'border-emerald-200 border-t-emerald-600'
+                  : 'border-indigo-200 border-t-indigo-600'
+              }`}></div>
+              <p className="text-xl text-gray-800 font-semibold mb-2">
+                {step === 'upload' ? 'Uploading...' : 'Processing...'}
+              </p>
+              {importType === 'transactions' && (
+                <>
+                  <p className="text-base text-gray-600 mb-4">
+                    Processing file {currentFileIndex + 1} of {files.length}
+                  </p>
+                  <div className="w-full bg-gray-200 rounded-full h-2 max-w-md mx-auto">
+                    <div
+                      className="bg-gradient-to-r from-indigo-500 to-purple-600 h-2 rounded-full transition-all duration-500"
+                      style={{ width: `${((currentFileIndex + 1) / files.length) * 100}%` }}
+                    ></div>
+                  </div>
+                </>
+              )}
+              {importType === 'brokerage' && (
+                <p className="text-base text-gray-600">
+                  Detecting provider and extracting holdings...
+                </p>
+              )}
+              <p className="text-sm text-gray-500 mt-4">This may take a moment...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Brokerage Preview Step */}
+        {step === 'preview' && brokerageParseResult && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Review Holdings</h2>
+
+            {/* Summary Card */}
+            <div className="bg-emerald-50 rounded-xl p-5 mb-6 border border-emerald-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-emerald-800 text-lg">
+                    {brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)} Statement
+                  </p>
+                  <p className="text-sm text-emerald-600 mt-1">
+                    {getAccountTypeLabel(brokerageParseResult.account_type)} • {brokerageParseResult.account_identifier}
+                  </p>
+                  {brokerageParseResult.statement_date && (
+                    <p className="text-sm text-emerald-600">
+                      As of {formatDate(brokerageParseResult.statement_date)}
+                    </p>
+                  )}
+                </div>
+                <div className="text-right">
+                  <p className="text-3xl font-bold text-emerald-800">
+                    {formatCurrency(brokerageParseResult.total_value)}
+                  </p>
+                  {brokerageParseResult.is_reconciled ? (
+                    <span className="text-xs text-emerald-600 font-medium">Reconciled</span>
+                  ) : (
+                    <span className="text-xs text-amber-600 font-medium">
+                      Diff: {formatCurrency(brokerageParseResult.reconciliation_diff)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Warnings */}
+            {brokerageParseResult.warnings && brokerageParseResult.warnings.length > 0 && (
+              <div className="bg-amber-50 rounded-lg p-4 mb-6 border border-amber-200">
+                <p className="font-semibold text-amber-800 mb-2">Warnings</p>
+                {brokerageParseResult.warnings.map((warning, i) => (
+                  <p key={i} className="text-sm text-amber-700">{warning}</p>
+                ))}
+              </div>
+            )}
+
+            {/* Positions Preview */}
+            <div className="border rounded-xl overflow-hidden mb-6">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Symbol</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Security</th>
+                    <th className="text-right px-4 py-3 font-semibold text-gray-700">Shares</th>
+                    <th className="text-right px-4 py-3 font-semibold text-gray-700">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {brokerageParseResult.positions.slice(0, 10).map((pos, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-mono font-semibold text-gray-900">{pos.symbol || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600 truncate max-w-[200px]">{pos.security_name}</td>
+                      <td className="px-4 py-3 text-right text-gray-900">
+                        {pos.quantity?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                        {formatCurrency(pos.market_value)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {brokerageParseResult.positions.length > 10 && (
+                <div className="bg-gray-50 px-4 py-2 text-sm text-gray-500 text-center border-t">
+                  + {brokerageParseResult.positions.length - 10} more positions
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-4">
+              <button
+                onClick={resetImport}
+                className="flex-1 py-3 px-6 border-2 border-gray-300 rounded-lg text-base font-semibold text-gray-700 bg-white hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBrokerageCommit}
+                disabled={importing}
+                className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:from-gray-400 disabled:to-gray-400 transition-all"
+              >
+                {importing ? 'Importing...' : 'Confirm Import'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Complete (Transactions) */}
+        {step === 'complete' && importType === 'transactions' && importRecords.length > 0 && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <div className="text-center mb-8">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
+                <svg className="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Import Complete!</h3>
+              <p className="text-gray-600 mt-2">
+                Processed {importRecords.length} file{importRecords.length !== 1 ? 's' : ''}
+              </p>
+            </div>
+
+            {/* Import Summary */}
+            <div className="space-y-4 mb-8">
+              {importRecords.map((record, index) => (
+                <div key={index} className={`border rounded-lg p-4 ${
+                  record.status === 'FAILED' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'
+                }`}>
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1">
+                      <div className="font-semibold text-gray-900 mb-1">{record.filename}</div>
+                      <div className={`text-sm font-medium ${
+                        record.status === 'FAILED' ? 'text-red-600' : 'text-green-600'
+                      }`}>
+                        {record.status}
+                      </div>
+                    </div>
+                    {record.status !== 'FAILED' && (
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-green-600">+{record.transactions_imported}</div>
+                        <div className="text-xs text-gray-500">imported</div>
+                      </div>
+                    )}
+                  </div>
+                  {record.status === 'FAILED' && record.error_message && (
+                    <div className="text-sm text-red-700 mt-2">Error: {record.error_message}</div>
+                  )}
+                  {record.status !== 'FAILED' && (
+                    <div className="text-sm text-gray-600">{record.transactions_duplicate} duplicates skipped</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Total Summary */}
+            <div className="border-t border-gray-200 pt-6 mb-6">
+              <div className="grid grid-cols-2 gap-4 text-center">
+                <div>
+                  <div className="text-3xl font-bold text-green-600">
+                    {importRecords.reduce((sum, r) => sum + r.transactions_imported, 0)}
+                  </div>
+                  <div className="text-sm text-gray-600 mt-1">Total Imported</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-gray-600">
+                    {importRecords.reduce((sum, r) => sum + r.transactions_duplicate, 0)}
+                  </div>
+                  <div className="text-sm text-gray-600 mt-1">Total Duplicates</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-4">
+              <button
+                onClick={resetImport}
+                className="flex-1 py-3 px-6 border-2 border-gray-300 rounded-lg text-base font-semibold text-gray-700 bg-white hover:bg-gray-50 transition-all"
+              >
+                Import More Files
+              </button>
+              <a
+                href="/transactions"
+                className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-center transition-all"
+              >
+                View Transactions
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Complete (Brokerage) */}
+        {step === 'complete' && importType === 'brokerage' && brokerageResult && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <div className="text-center mb-8">
+              <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-emerald-100 mb-4">
+                <svg className="h-8 w-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Import Complete!</h3>
+              <p className="text-gray-600 mt-2">Holdings imported successfully</p>
+            </div>
+
+            {/* Summary */}
+            <div className="bg-emerald-50 rounded-xl p-6 mb-8 border border-emerald-200">
+              <div className="text-center">
+                <p className="text-lg font-semibold text-emerald-800 mb-2">{brokerageResult.account_name}</p>
+                <p className="text-4xl font-bold text-emerald-700 mb-2">
+                  {formatCurrency(brokerageResult.total_value)}
+                </p>
+                <p className="text-sm text-emerald-600">
+                  {brokerageResult.position_count} positions imported
                 </p>
               </div>
             </div>
 
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={importing || !selectedAccount || files.length === 0}
-              className="w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-lg shadow-lg text-base font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all transform hover:scale-105"
-            >
-              {importing ? (
-                <>
-                  <span className="animate-spin mr-2">⏳</span>
-                  Importing...
-                </>
-              ) : (
-                <>
-                  <span className="mr-2">🚀</span>
-                  {files.length > 0 ? `Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Import Transactions'}
-                </>
-              )}
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* Step 2: Processing */}
-      {(step === 'upload' || step === 'processing') && (
-        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-16 w-16 border-4 border-indigo-200 border-t-indigo-600 mx-auto mb-6"></div>
-            <p className="text-xl text-gray-800 font-semibold mb-2">
-              {step === 'upload' ? 'Uploading files...' : 'Processing transactions...'}
-            </p>
-            <p className="text-base text-gray-600 mb-4">
-              Processing file {currentFileIndex + 1} of {files.length}
-            </p>
-            <div className="w-full bg-gray-200 rounded-full h-2 max-w-md mx-auto">
-              <div
-                className="bg-gradient-to-r from-indigo-500 to-purple-600 h-2 rounded-full transition-all duration-500"
-                style={{ width: `${((currentFileIndex + 1) / files.length) * 100}%` }}
-              ></div>
-            </div>
-            <p className="text-sm text-gray-500 mt-4">This may take a moment...</p>
-          </div>
-        </div>
-      )}
-
-      {/* Step 3: Complete */}
-      {step === 'complete' && importRecords.length > 0 && (
-        <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
-          <div className="text-center mb-8">
-            <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
-              <svg
-                className="h-8 w-8 text-green-600"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <h3 className="text-2xl font-bold text-gray-900">Import Complete!</h3>
-            <p className="text-gray-600 mt-2">
-              Processed {importRecords.length} file{importRecords.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-
-          {/* Import Summary for each file */}
-          <div className="space-y-4 mb-8">
-            {importRecords.map((record, index) => (
-              <div key={index} className={`border rounded-lg p-4 ${
-                record.status === 'FAILED' ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'
-              }`}>
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex-1">
-                    <div className="font-semibold text-gray-900 mb-1">{record.filename}</div>
-                    <div className={`text-sm font-medium ${
-                      record.status === 'FAILED' ? 'text-red-600' : 'text-green-600'
-                    }`}>
-                      {record.status}
-                    </div>
-                  </div>
-                  {record.status !== 'FAILED' && (
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-green-600">
-                        +{record.transactions_imported}
-                      </div>
-                      <div className="text-xs text-gray-500">imported</div>
-                    </div>
-                  )}
-                </div>
-                {record.status === 'FAILED' && record.error_message && (
-                  <div className="text-sm text-red-700 mt-2">
-                    Error: {record.error_message}
-                  </div>
-                )}
-                {record.status !== 'FAILED' && (
-                  <div className="flex justify-between text-sm text-gray-600">
-                    <span>{record.transactions_duplicate} duplicates skipped</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Total Summary */}
-          <div className="border-t border-gray-200 pt-6 mb-6">
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div>
-                <div className="text-3xl font-bold text-green-600">
-                  {importRecords.reduce((sum, r) => sum + r.transactions_imported, 0)}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">Total Imported</div>
-              </div>
-              <div>
-                <div className="text-3xl font-bold text-gray-600">
-                  {importRecords.reduce((sum, r) => sum + r.transactions_duplicate, 0)}
-                </div>
-                <div className="text-sm text-gray-600 mt-1">Total Duplicates</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Actions */}
-          <div className="flex gap-4">
-            <button
-              onClick={resetImport}
-              className="flex-1 py-3 px-6 border-2 border-gray-300 rounded-lg shadow-sm text-base font-semibold text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all"
-            >
-              Import More Files
-            </button>
-            <a
-              href="/transactions"
-              className="flex-1 py-3 px-6 border border-transparent rounded-lg shadow-lg text-base font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 text-center transition-all"
-            >
-              View Transactions
-            </a>
-          </div>
-        </div>
-      )}
-
-      {/* New Account Modal */}
-      {showNewAccountModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-gray-900">Create New Account</h2>
+            {/* Actions */}
+            <div className="flex gap-4">
               <button
-                onClick={() => setShowNewAccountModal(false)}
-                className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+                onClick={resetImport}
+                className="flex-1 py-3 px-6 border-2 border-gray-300 rounded-lg text-base font-semibold text-gray-700 bg-white hover:bg-gray-50 transition-all"
               >
-                &times;
+                Import More
               </button>
+              <a
+                href="/investments"
+                className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-center transition-all"
+              >
+                View Investments
+              </a>
             </div>
-
-            <form onSubmit={handleCreateAccount}>
-              {/* Account Name */}
-              <div className="mb-4">
-                <label htmlFor="new-account-name" className="block text-sm font-medium text-gray-700 mb-1">
-                  Account Name *
-                </label>
-                <input
-                  type="text"
-                  id="new-account-name"
-                  value={newAccountName}
-                  onChange={(e) => setNewAccountName(e.target.value)}
-                  placeholder="e.g., Amex Platinum Card"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  required
-                />
-              </div>
-
-              {/* Account Type */}
-              <div className="mb-4">
-                <label htmlFor="new-account-type" className="block text-sm font-medium text-gray-700 mb-1">
-                  Account Type *
-                </label>
-                <select
-                  id="new-account-type"
-                  value={newAccountType}
-                  onChange={(e) => setNewAccountType(e.target.value as AccountType)}
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                  required
-                >
-                  {ACCOUNT_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type.replace('_', ' ')}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Institution */}
-              <div className="mb-4">
-                <label htmlFor="new-account-institution" className="block text-sm font-medium text-gray-700 mb-1">
-                  Institution
-                </label>
-                <input
-                  type="text"
-                  id="new-account-institution"
-                  value={newAccountInstitution}
-                  onChange={(e) => setNewAccountInstitution(e.target.value)}
-                  placeholder="e.g., American Express"
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-
-              {/* Last 4 Digits */}
-              <div className="mb-6">
-                <label htmlFor="new-account-last4" className="block text-sm font-medium text-gray-700 mb-1">
-                  Last 4 Digits
-                </label>
-                <input
-                  type="text"
-                  id="new-account-last4"
-                  value={newAccountLast4}
-                  onChange={(e) => setNewAccountLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  placeholder="e.g., 1007"
-                  maxLength={4}
-                  className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
-
-              {/* Buttons */}
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => setShowNewAccountModal(false)}
-                  className="flex-1 py-2 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingAccount || !newAccountName.trim()}
-                  className="flex-1 py-2 px-4 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed"
-                >
-                  {creatingAccount ? 'Creating...' : 'Create Account'}
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* New Account Modal */}
+        {showNewAccountModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md mx-4 p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-gray-900">Create New Account</h2>
+                <button
+                  onClick={() => setShowNewAccountModal(false)}
+                  className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <form onSubmit={handleCreateAccount}>
+                <div className="mb-4">
+                  <label htmlFor="new-account-name" className="block text-sm font-medium text-gray-700 mb-1">
+                    Account Name *
+                  </label>
+                  <input
+                    type="text"
+                    id="new-account-name"
+                    value={newAccountName}
+                    onChange={(e) => setNewAccountName(e.target.value)}
+                    placeholder="e.g., Amex Platinum Card"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                </div>
+
+                <div className="mb-4">
+                  <label htmlFor="new-account-type" className="block text-sm font-medium text-gray-700 mb-1">
+                    Account Type *
+                  </label>
+                  <select
+                    id="new-account-type"
+                    value={newAccountType}
+                    onChange={(e) => setNewAccountType(e.target.value as AccountType)}
+                    className={`block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 ${
+                      importType === 'brokerage' ? 'focus:ring-emerald-500 focus:border-emerald-500' : 'focus:ring-indigo-500 focus:border-indigo-500'
+                    }`}
+                    required
+                  >
+                    {(importType === 'brokerage' ? BROKERAGE_ACCOUNT_TYPES : BANK_ACCOUNT_TYPES).map((type) => (
+                      <option key={type} value={type}>
+                        {getAccountTypeLabel(type)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mb-4">
+                  <label htmlFor="new-account-institution" className="block text-sm font-medium text-gray-700 mb-1">
+                    Institution
+                  </label>
+                  <input
+                    type="text"
+                    id="new-account-institution"
+                    value={newAccountInstitution}
+                    onChange={(e) => setNewAccountInstitution(e.target.value)}
+                    placeholder="e.g., American Express"
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="mb-6">
+                  <label htmlFor="new-account-last4" className="block text-sm font-medium text-gray-700 mb-1">
+                    Last 4 Digits
+                  </label>
+                  <input
+                    type="text"
+                    id="new-account-last4"
+                    value={newAccountLast4}
+                    onChange={(e) => setNewAccountLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="e.g., 1007"
+                    maxLength={4}
+                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowNewAccountModal(false)}
+                    className="flex-1 py-2 px-4 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creatingAccount || !newAccountName.trim()}
+                    className={`flex-1 py-2 px-4 border border-transparent rounded-lg text-sm font-medium text-white disabled:bg-gray-400 disabled:cursor-not-allowed ${
+                      importType === 'brokerage' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    {creatingAccount ? 'Creating...' : 'Create Account'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -26,6 +26,7 @@ export async function createAccount(data: {
 export async function updateAccount(id: string, data: {
   name?: string;
   institution?: string;
+  account_type?: string;
   account_number_last4?: string;
   is_active?: boolean;
 }) {
@@ -38,8 +39,9 @@ export async function updateAccount(id: string, data: {
   return response.json();
 }
 
-export async function deleteAccount(id: string) {
-  const response = await fetch(`${API_BASE_URL}/accounts/${id}`, {
+export async function deleteAccount(id: string, permanent: boolean = false) {
+  const queryParams = permanent ? '?permanent=true' : '';
+  const response = await fetch(`${API_BASE_URL}/accounts/${id}${queryParams}`, {
     method: 'DELETE',
   });
   if (!response.ok) throw new Error('Failed to delete account');
@@ -499,4 +501,107 @@ export async function exportTransactions(params?: {
   a.click();
   document.body.removeChild(a);
   window.URL.revokeObjectURL(downloadUrl);
+}
+
+// Brokerage API
+export async function uploadBrokerageStatement(file: File, accountId?: string) {
+  const formData = new FormData();
+  formData.append('file', file);
+  if (accountId) {
+    formData.append('account_id', accountId);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/brokerage/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to upload brokerage statement: ${errorText}`);
+  }
+
+  return response.json();
+}
+
+export async function parseBrokerageStatement(importId: string) {
+  const response = await fetch(`${API_BASE_URL}/brokerage/${importId}/parse`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error('Failed to parse brokerage statement');
+  return response.json();
+}
+
+export async function commitBrokerageImport(
+  importId: string,
+  options?: {
+    accountId?: string;
+    createAccount?: boolean;
+    accountName?: string;
+  }
+) {
+  const formData = new FormData();
+  if (options?.accountId) formData.append('account_id', options.accountId);
+  if (options?.createAccount !== undefined) formData.append('create_account', String(options.createAccount));
+  if (options?.accountName) formData.append('account_name', options.accountName);
+
+  const response = await fetch(`${API_BASE_URL}/brokerage/${importId}/commit`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to commit brokerage import: ${errorText}`);
+  }
+
+  return response.json();
+}
+
+export async function getHoldingsSnapshots(params?: {
+  accountId?: string;
+  startDate?: string;
+  endDate?: string;
+}) {
+  const queryParams = new URLSearchParams();
+  if (params?.accountId) queryParams.append('account_id', params.accountId);
+  if (params?.startDate) queryParams.append('start_date', params.startDate);
+  if (params?.endDate) queryParams.append('end_date', params.endDate);
+
+  const url = `${API_BASE_URL}/brokerage/snapshots${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch holdings snapshots');
+  return response.json();
+}
+
+export async function getSnapshotDetail(snapshotId: string) {
+  const response = await fetch(`${API_BASE_URL}/brokerage/snapshots/${snapshotId}`);
+  if (!response.ok) throw new Error('Failed to fetch snapshot detail');
+  return response.json();
+}
+
+export async function getNetWorth(accountIds?: string[]) {
+  const queryParams = new URLSearchParams();
+  if (accountIds && accountIds.length > 0) {
+    queryParams.append('account_ids', accountIds.join(','));
+  }
+
+  const url = `${API_BASE_URL}/brokerage/net-worth${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch net worth');
+  return response.json();
+}
+
+export async function deleteBrokerageAccount(accountId: string) {
+  const response = await fetch(`${API_BASE_URL}/brokerage/accounts/${accountId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete brokerage account');
+}
+
+export async function deleteBrokerageSnapshot(snapshotId: string) {
+  const response = await fetch(`${API_BASE_URL}/brokerage/snapshots/${snapshotId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete snapshot');
 }
