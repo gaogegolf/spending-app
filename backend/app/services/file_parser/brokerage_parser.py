@@ -147,7 +147,12 @@ def detect_account_type(text: str, provider: str) -> str:
     def has_word(word: str) -> bool:
         return bool(re.search(rf'\b{word}\b', text_lower))
 
-    # Roth IRA indicators
+    # 401(k) indicators - check FIRST because 401(k) can have Roth contributions
+    # but it's still a 401(k), not a Roth IRA
+    if "401(k)" in text_lower or "401k" in text_lower:
+        return "RETIREMENT_401K"
+
+    # Roth IRA indicators (only if NOT a 401k)
     if "roth ira" in text_lower or "roth individual" in text_lower:
         return "IRA_ROTH"
 
@@ -156,8 +161,8 @@ def detect_account_type(text: str, provider: str) -> str:
             (has_word("ira") and "roth" not in text_lower)):
         return "IRA_TRADITIONAL"
 
-    # 401(k) indicators
-    if "401(k)" in text_lower or "401k" in text_lower or "retirement plan" in text_lower:
+    # Retirement plan (generic) - after specific IRA checks
+    if "retirement plan" in text_lower:
         return "RETIREMENT_401K"
 
     # Stock plan indicators - use word boundary to avoid matching 'rsu' in 'pursuant'
