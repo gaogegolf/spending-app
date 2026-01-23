@@ -290,3 +290,63 @@ async def get_net_worth(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to calculate net worth: {str(e)}"
         )
+
+
+@router.get("/brokerage/net-worth/by-account")
+async def get_net_worth_by_account(
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Get net worth history broken down by account.
+
+    Returns history with per-account values for stacked charts.
+
+    Args:
+        account_ids: Optional comma-separated list of account IDs
+        db: Database session
+
+    Returns:
+        History with per-account breakdown
+    """
+    service = BrokerageImportService(db)
+
+    try:
+        account_id_list = account_ids.split(",") if account_ids else None
+        result = service.get_net_worth_by_account(account_ids=account_id_list)
+        return result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get net worth by account: {str(e)}"
+        )
+
+
+@router.get("/brokerage/net-worth/by-asset-class")
+async def get_asset_class_breakdown(
+    account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """Get asset class breakdown of holdings.
+
+    Returns current breakdown and history by asset class.
+
+    Args:
+        account_ids: Optional comma-separated list of account IDs
+        db: Database session
+
+    Returns:
+        Current and historical breakdown by asset class
+    """
+    service = BrokerageImportService(db)
+
+    try:
+        account_id_list = account_ids.split(",") if account_ids else None
+        result = service.get_asset_class_breakdown(account_ids=account_id_list)
+        return result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get asset class breakdown: {str(e)}"
+        )

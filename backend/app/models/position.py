@@ -50,8 +50,12 @@ class Position(Base):
     # Holdings
     quantity = Column(Numeric(18, 6))  # Shares/units (supports fractional)
     price = Column(Numeric(18, 4))  # Price per share (if available)
-    market_value = Column(Numeric(18, 2), nullable=False)  # Total market value
+    market_value = Column(Numeric(18, 2), nullable=False)  # Total market value in original currency
     cost_basis = Column(Numeric(18, 2))  # Cost basis (if available)
+
+    # Multi-currency support (for USD base currency aggregation)
+    market_value_usd = Column(Numeric(18, 2))  # Market value converted to USD
+    fx_rate_used = Column(Numeric(18, 8))  # FX rate used for conversion (null if already USD)
 
     # For RSU/stock plans
     is_vested = Column(Boolean, default=True)  # False for locked/unvested

@@ -167,6 +167,10 @@ export interface Position {
   market_value: number;
   cost_basis: number | null;
   asset_class: AssetClass;
+  // Multi-currency support
+  currency?: string;
+  market_value_usd?: number | null;
+  fx_rate_used?: number | null;
 }
 
 export interface HoldingsSnapshot {
@@ -181,6 +185,10 @@ export interface HoldingsSnapshot {
   is_reconciled: boolean;
   position_count: number;
   positions?: Position[];
+  // Multi-currency support
+  base_currency?: string;
+  cash_balances?: Record<string, number>;
+  fx_rates?: Record<string, number>;
 }
 
 export interface NetWorthData {
@@ -219,6 +227,58 @@ export interface BrokerageParseResult {
     market_value: number;
     cost_basis: number | null;
     asset_class: string;
+    // Multi-currency support
+    currency?: string;
+    market_value_usd?: number | null;
+    fx_rate_used?: number | null;
   }[];
   warnings: string[];
+  // Multi-currency support
+  base_currency?: string;
+  fx_rates?: Record<string, number>;
+  cash_by_currency?: Record<string, number>;
+  // Multi-account support (set when parsing multi-account statements like IBKR)
+  is_multi_account?: boolean;
+  account_count?: number;
+  accounts?: BrokerageParseResult[];
+}
+
+// Net worth by account breakdown
+export interface NetWorthByAccountData {
+  accounts: {
+    account_id: string;
+    account_name: string;
+    account_type: string;
+  }[];
+  history: {
+    date: string;
+    total: number;
+    accounts: {
+      account_id: string;
+      account_name: string;
+      account_type: string;
+      value: number;
+    }[];
+  }[];
+}
+
+// Asset class breakdown
+export interface AssetClassBreakdown {
+  current: {
+    equity: number;
+    fixed_income: number;
+    cash: number;
+    alternative: number;
+    unknown: number;
+    total: number;
+  };
+  history: {
+    date: string;
+    equity: number;
+    fixed_income: number;
+    cash: number;
+    alternative: number;
+    unknown: number;
+    total: number;
+  }[];
 }

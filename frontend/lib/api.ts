@@ -592,6 +592,30 @@ export async function getNetWorth(accountIds?: string[]) {
   return response.json();
 }
 
+export async function getNetWorthByAccount(accountIds?: string[]) {
+  const queryParams = new URLSearchParams();
+  if (accountIds && accountIds.length > 0) {
+    queryParams.append('account_ids', accountIds.join(','));
+  }
+
+  const url = `${API_BASE_URL}/brokerage/net-worth/by-account${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch net worth by account');
+  return response.json();
+}
+
+export async function getAssetClassBreakdown(accountIds?: string[]) {
+  const queryParams = new URLSearchParams();
+  if (accountIds && accountIds.length > 0) {
+    queryParams.append('account_ids', accountIds.join(','));
+  }
+
+  const url = `${API_BASE_URL}/brokerage/net-worth/by-asset-class${queryParams.toString() ? `?${queryParams}` : ''}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error('Failed to fetch asset class breakdown');
+  return response.json();
+}
+
 export async function deleteBrokerageAccount(accountId: string) {
   const response = await fetch(`${API_BASE_URL}/brokerage/accounts/${accountId}`, {
     method: 'DELETE',

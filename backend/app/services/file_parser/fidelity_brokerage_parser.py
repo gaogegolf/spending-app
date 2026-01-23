@@ -15,11 +15,514 @@ from app.services.file_parser.brokerage_parser import (
 
 
 class FidelityBrokerageParser(BaseBrokerageParser):
-    """Parser for Fidelity brokerage statements."""
+    """Parser for Fidelity brokerage statements.
+
+    Supports both single-account and multi-account statements.
+    Multi-account statements have an "Accounts Included in This Report" table
+    listing multiple accounts with their page numbers.
+    """
 
     def __init__(self, file_path: str):
         super().__init__(file_path)
         self.provider = "fidelity"
+        self._account_sections: List[dict] = []  # For multi-account parsing
+        self._current_section_pages: Optional[List[int]] = None  # Pages for current account
+
+    def is_multi_account_statement(self) -> bool:
+        """Check if this is a multi-account statement.
+
+        Multi-account statements have an "Accounts Included in This Report" table
+        with multiple account entries.
+
+        Returns:
+            True if this is a multi-account statement
+        """
+        if not self.full_text:
+            self._open_pdf()
+
+        # Look for "Accounts Included in This Report" section
+        if "Accounts Included in This Report" not in self.full_text:
+            return False
+
+        # Parse the accounts table to count entries
+        accounts = self._parse_accounts_table()
+        return len(accounts) > 1
+
+    def get_account_count(self) -> int:
+        """Get the number of accounts in the statement.
+
+        Returns:
+            Number of unique accounts found
+        """
+        if not self.full_text:
+            self._open_pdf()
+
+        accounts = self._parse_accounts_table()
+        return len(accounts)
+
+    def _parse_accounts_table(self) -> List[dict]:
+        """Parse the 'Accounts Included in This Report' table.
+
+        Returns:
+            List of dicts with account info: page, name, account_number, ending_value
+        """
+        accounts = []
+
+        # Pattern for account rows in the table:
+        # 4  FIDELITY TRADITIONAL IRA XINZHU CAI - TRADITIONAL IRA  226-722819       $12.49           $13.30
+        # 7  FIDELITY ROTH IRA XINZHU CAI - ROTH INDIVIDUAL        231-489641   177,090.28      187,294.96
+        # The page number is at the start, followed by account name, account number, values
+        pattern = r"(\d+)\s+(FIDELITY[A-Z\s]+(?:IRA|BROKERAGE|ACCOUNT)[^0-9]+)(\d{3}-\d{6})\s+\$?([\d,]+\.?\d*)\s+\$?([\d,]+\.?\d*)"
+
+        matches = re.findall(pattern, self.full_text, re.IGNORECASE)
+
+        for match in matches:
+            page_num, account_name, account_number, beginning_value, ending_value = match
+            accounts.append({
+                "page": int(page_num),
+                "name": account_name.strip(),
+                "account_number": account_number,
+                "beginning_value": beginning_value.replace(",", ""),
+                "ending_value": ending_value.replace(",", ""),
+            })
+
+        # Sort by page number
+        accounts.sort(key=lambda x: x["page"])
+
+        return accounts
+
+    def _get_pages_for_account(self, account_index: int, accounts: List[dict]) -> List[int]:
+        """Get the page range for a specific account.
+
+        Args:
+            account_index: Index of the account in accounts list
+            accounts: List of account info dicts
+
+        Returns:
+            List of page numbers (0-indexed) for this account
+        """
+        if not accounts or account_index >= len(accounts):
+            return []
+
+        start_page = accounts[account_index]["page"] - 1  # Convert to 0-indexed
+
+        # End page is either the start of next account or end of PDF
+        if account_index + 1 < len(accounts):
+            end_page = accounts[account_index + 1]["page"] - 1
+        else:
+            end_page = len(self.pdf.pages)
+
+        return list(range(start_page, end_page))
+
+    def parse_all(self) -> List[BrokerageParseResult]:
+        """Parse all accounts in the statement.
+
+        For single-account statements, returns a list with one result.
+        For multi-account statements, returns a result for each account.
+
+        Returns:
+            List of BrokerageParseResult objects, one per account
+        """
+        try:
+            self._open_pdf()
+
+            if not self.is_multi_account_statement():
+                # Single account - use regular parse
+                result = self._parse_with_pages(None)
+                return [result]
+
+            # Multi-account statement - parse each account section
+            results = []
+            accounts = self._parse_accounts_table()
+
+            for i, account_info in enumerate(accounts):
+                pages = self._get_pages_for_account(i, accounts)
+                self._current_section_pages = pages
+
+                # Extract text for just these pages
+                section_text = self._get_text_for_pages(pages)
+
+                result = self._parse_single_account(
+                    section_text,
+                    pages,
+                    account_info["account_number"],
+                    account_info["ending_value"],
+                )
+                results.append(result)
+
+            return results
+
+        finally:
+            self._close_pdf()
+
+    def _get_text_for_pages(self, pages: List[int]) -> str:
+        """Extract text from specific pages.
+
+        Args:
+            pages: List of page indices (0-indexed)
+
+        Returns:
+            Concatenated text from specified pages
+        """
+        text_parts = []
+        for page_idx in pages:
+            if 0 <= page_idx < len(self.pdf.pages):
+                page_text = self.pdf.pages[page_idx].extract_text() or ""
+                text_parts.append(page_text)
+        return "\n".join(text_parts)
+
+    def _parse_single_account(
+        self,
+        section_text: str,
+        pages: List[int],
+        account_number: str,
+        expected_value: str,
+    ) -> BrokerageParseResult:
+        """Parse a single account section from Fidelity statement.
+
+        Args:
+            section_text: The text for this account's section
+            pages: Page indices for this account
+            account_number: The account number (e.g., "231-489641")
+            expected_value: Expected ending value for validation
+
+        Returns:
+            BrokerageParseResult with holdings snapshot
+        """
+        errors = []
+        warnings = []
+
+        try:
+            # Detect account type from section text
+            account_type = detect_account_type(section_text, self.provider)
+
+            # Mask account number
+            account_identifier = f"****{account_number[-4:]}" if len(account_number) >= 4 else account_number
+
+            # Extract statement dates (should be same across accounts)
+            statement_date, statement_start_date = self._extract_statement_dates_from_text(section_text)
+            if not statement_date:
+                # Fall back to full text
+                statement_date, statement_start_date = self._extract_statement_dates()
+
+            # Extract totals from section
+            total_value, total_cash, total_securities = self._extract_totals_from_text(section_text)
+
+            # If we couldn't extract total value, use the expected value from the table
+            if total_value == Decimal("0") and expected_value:
+                try:
+                    total_value = Decimal(expected_value.replace(",", ""))
+                except InvalidOperation:
+                    pass
+
+            # Extract positions from pages
+            positions = self._extract_positions_from_pages(pages)
+
+            # Calculate total from positions for reconciliation
+            calculated_total = self._calculate_total(positions)
+            is_reconciled, reconciliation_diff = self._reconcile(total_value, calculated_total)
+
+            if not is_reconciled:
+                warnings.append(
+                    f"Reconciliation warning: calculated total ${calculated_total} differs from "
+                    f"reported total ${total_value} by ${reconciliation_diff}"
+                )
+
+            return BrokerageParseResult(
+                success=True,
+                provider=self.provider,
+                account_type=account_type,
+                account_identifier=account_identifier,
+                statement_date=statement_date,
+                statement_start_date=statement_start_date,
+                total_value=total_value,
+                total_cash=total_cash,
+                total_securities=total_securities,
+                positions=positions,
+                calculated_total=calculated_total,
+                is_reconciled=is_reconciled,
+                reconciliation_diff=reconciliation_diff,
+                errors=errors,
+                warnings=warnings,
+                raw_metadata={
+                    "pages": len(pages),
+                    "position_count": len(positions),
+                    "account_number": account_number,
+                },
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Fidelity account {account_number}: {str(e)}")
+            return BrokerageParseResult(
+                success=False,
+                provider=self.provider,
+                account_type="BROKERAGE",
+                account_identifier=f"****{account_number[-4:]}" if len(account_number) >= 4 else "",
+                statement_date=None,
+                statement_start_date=None,
+                total_value=Decimal("0"),
+                total_cash=Decimal("0"),
+                total_securities=Decimal("0"),
+                positions=[],
+                calculated_total=Decimal("0"),
+                is_reconciled=False,
+                reconciliation_diff=Decimal("0"),
+                errors=errors,
+                warnings=warnings,
+            )
+
+    def _extract_statement_dates_from_text(self, text: str) -> Tuple[Optional[date], Optional[date]]:
+        """Extract statement dates from a text section."""
+        # Try "Month Day, Year - Month Day, Year" format
+        date_range_pattern = r"(\w+\s+\d{1,2},\s+\d{4})\s*[-–]\s*(\w+\s+\d{1,2},\s+\d{4})"
+        match = re.search(date_range_pattern, text)
+
+        if match:
+            start_str = match.group(1)
+            end_str = match.group(2)
+            try:
+                start_date = datetime.strptime(start_str, "%B %d, %Y").date()
+                end_date = datetime.strptime(end_str, "%B %d, %Y").date()
+                return end_date, start_date
+            except ValueError:
+                pass
+
+        return None, None
+
+    def _extract_totals_from_text(self, text: str) -> Tuple[Decimal, Decimal, Decimal]:
+        """Extract totals from a text section."""
+        total_value = Decimal("0")
+        total_cash = Decimal("0")
+        total_securities = Decimal("0")
+
+        # Extract total account value
+        value_patterns = [
+            r"Your\s+Account\s+Value[:\s]*\$?([\d,]+\.?\d*)",
+            r"Ending\s+Account\s+Value[:\s]*\$?([\d,]+\.?\d*)",
+            r"Account\s+Value[:\s]*\$?([\d,]+\.?\d*)",
+        ]
+
+        for pattern in value_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    total_value = Decimal(match.group(1).replace(",", ""))
+                    break
+                except InvalidOperation:
+                    continue
+
+        # Extract Core Account (cash) total
+        cash_pattern = r"Total\s+Core\s+Account[^$]*\$[\d,]+\.?\d*[^$]*\$([\d,]+\.?\d*)"
+        match = re.search(cash_pattern, text, re.IGNORECASE)
+        if match:
+            try:
+                total_cash = Decimal(match.group(1).replace(",", ""))
+            except InvalidOperation:
+                pass
+
+        # Extract securities total
+        securities_pattern = r"Total\s+Exchange\s+Traded\s+Products[^$]*\$[\d,]+\.?\d*[^$]*\$([\d,]+\.?\d*)"
+        match = re.search(securities_pattern, text, re.IGNORECASE)
+        if match:
+            try:
+                total_securities = Decimal(match.group(1).replace(",", ""))
+            except InvalidOperation:
+                pass
+
+        return total_value, total_cash, total_securities
+
+    def _extract_positions_from_pages(self, pages: List[int]) -> List[PositionData]:
+        """Extract positions from specific pages.
+
+        Args:
+            pages: List of page indices (0-indexed)
+
+        Returns:
+            List of PositionData objects
+        """
+        positions = []
+        row_index = 0
+
+        for page_idx in pages:
+            if 0 <= page_idx < len(self.pdf.pages):
+                page = self.pdf.pages[page_idx]
+                tables = page.extract_tables()
+
+                for table in tables:
+                    if not table:
+                        continue
+
+                    # Check if this looks like a holdings table
+                    header_row = table[0] if table else []
+                    if not self._is_holdings_table(header_row):
+                        continue
+
+                    # Parse holdings rows
+                    for row in table[1:]:
+                        position = self._parse_holdings_row(row, row_index)
+                        if position:
+                            positions.append(position)
+                            row_index += 1
+
+        # If no tables found, try text extraction
+        if not positions:
+            section_text = self._get_text_for_pages(pages)
+            positions = self._extract_positions_from_section_text(section_text)
+
+        return positions
+
+    def _extract_positions_from_section_text(self, section_text: str) -> List[PositionData]:
+        """Extract positions from text when table extraction fails."""
+        positions = []
+        row_index = 0
+        lines = section_text.split('\n')
+
+        # Pattern for holdings lines with multiple numbers
+        holdings_pattern = re.compile(
+            r'^([A-Z][A-Z0-9\s&\'\-]+?)\s+'
+            r'\$?([\d,]+\.?\d{0,2})\s+'
+            r'([\d,]+\.?\d{0,4})\s+'
+            r'\$?([\d,]+\.?\d{0,4})\s+'
+            r'\$?([\d,]+\.?\d{0,2})\s+'
+            r'\$?([\d,]+\.?\d{0,2})\s+'
+            r'-?\$?([\d,]+\.?\d{0,2})'
+        )
+
+        symbol_pattern = re.compile(r'\(([A-Z]{1,5})\)')
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            if any(skip in line.lower() for skip in ['total', 'subtotal', 'description', 'beginning', 'continued', 'page ', 'account']):
+                i += 1
+                continue
+
+            match = holdings_pattern.match(line)
+            if match:
+                security_name = match.group(1).strip()
+
+                symbol = None
+                for j in range(1, 3):
+                    if i + j < len(lines):
+                        next_line = lines[i + j].strip()
+                        symbol_match = symbol_pattern.search(next_line)
+                        if symbol_match:
+                            symbol = symbol_match.group(1)
+                            break
+
+                try:
+                    quantity = Decimal(match.group(3).replace(",", ""))
+                    price = Decimal(match.group(4).replace(",", ""))
+                    market_value = Decimal(match.group(5).replace(",", ""))
+                    cost_basis_str = match.group(6).replace(",", "")
+                    cost_basis = Decimal(cost_basis_str) if cost_basis_str else None
+
+                    if market_value > 0:
+                        security_type = self._classify_security_type(security_name, symbol)
+                        asset_class = self._classify_asset_class(security_type, security_name)
+
+                        positions.append(PositionData(
+                            symbol=symbol,
+                            cusip=None,
+                            security_name=security_name,
+                            security_type=security_type,
+                            quantity=quantity,
+                            price=price,
+                            market_value=market_value,
+                            cost_basis=cost_basis,
+                            asset_class=asset_class,
+                            row_index=row_index,
+                        ))
+                        row_index += 1
+                except (InvalidOperation, IndexError):
+                    pass
+
+            i += 1
+
+        return positions
+
+    def _parse_with_pages(self, pages: Optional[List[int]]) -> BrokerageParseResult:
+        """Parse statement using specific pages or all pages."""
+        if pages is None:
+            # Use all pages (single account mode)
+            return self._parse_full_statement()
+        else:
+            # Use specific pages (multi-account mode)
+            section_text = self._get_text_for_pages(pages)
+            # Extract account number from section
+            pattern = r"Account\s*(?:Number|#)[:\s]*([A-Z]?\d{2,3}-\d{6})"
+            match = re.search(pattern, section_text, re.IGNORECASE)
+            account_number = match.group(1) if match else "Unknown"
+
+            return self._parse_single_account(section_text, pages, account_number, "")
+
+    def _parse_full_statement(self) -> BrokerageParseResult:
+        """Parse the full statement (original single-account logic)."""
+        errors = []
+        warnings = []
+
+        try:
+            # Detect account type
+            self.account_type = self.detect_account_type()
+
+            # Extract data
+            account_id = self._extract_account_identifier()
+            statement_date, statement_start_date = self._extract_statement_dates()
+            total_value, total_cash, total_securities = self._extract_totals()
+            positions = self._extract_positions()
+
+            # Calculate total from positions for reconciliation
+            calculated_total = self._calculate_total(positions)
+            is_reconciled, reconciliation_diff = self._reconcile(total_value, calculated_total)
+
+            if not is_reconciled:
+                warnings.append(
+                    f"Reconciliation warning: calculated total ${calculated_total} differs from "
+                    f"reported total ${total_value} by ${reconciliation_diff}"
+                )
+
+            return BrokerageParseResult(
+                success=True,
+                provider=self.provider,
+                account_type=self.account_type,
+                account_identifier=account_id,
+                statement_date=statement_date,
+                statement_start_date=statement_start_date,
+                total_value=total_value,
+                total_cash=total_cash,
+                total_securities=total_securities,
+                positions=positions,
+                calculated_total=calculated_total,
+                is_reconciled=is_reconciled,
+                reconciliation_diff=reconciliation_diff,
+                errors=errors,
+                warnings=warnings,
+                raw_metadata={
+                    "pages": len(self.pdf.pages) if self.pdf else 0,
+                    "position_count": len(positions),
+                },
+            )
+
+        except Exception as e:
+            errors.append(f"Failed to parse Fidelity statement: {str(e)}")
+            return BrokerageParseResult(
+                success=False,
+                provider=self.provider,
+                account_type=self.account_type or "BROKERAGE",
+                account_identifier="",
+                statement_date=None,
+                statement_start_date=None,
+                total_value=Decimal("0"),
+                total_cash=Decimal("0"),
+                total_securities=Decimal("0"),
+                positions=[],
+                calculated_total=Decimal("0"),
+                is_reconciled=False,
+                reconciliation_diff=Decimal("0"),
+                errors=errors,
+                warnings=warnings,
+            )
 
     def parse(self) -> BrokerageParseResult:
         """Parse Fidelity statement and return holdings snapshot."""

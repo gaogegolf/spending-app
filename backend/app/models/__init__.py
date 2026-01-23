@@ -6,6 +6,7 @@ from app.models.transaction import Transaction, TransactionType, ClassificationM
 from app.models.rule import Rule, RuleType
 from app.models.holdings_snapshot import HoldingsSnapshot
 from app.models.position import Position, PositionType, AssetClass
+from app.models.fx_rate import FxRate
 
 __all__ = [
     "Account",
@@ -22,4 +23,5 @@ __all__ = [
     "Position",
     "PositionType",
     "AssetClass",
+    "FxRate",
 ]

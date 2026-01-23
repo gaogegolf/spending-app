@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+import re
 import pdfplumber
 
 
@@ -24,6 +25,10 @@ class PositionData:
     is_vested: bool = True
     vesting_date: Optional[date] = None
     row_index: int = 0
+    # Multi-currency support
+    currency: str = "USD"  # Original currency of the position
+    market_value_usd: Optional[Decimal] = None  # Market value converted to USD
+    fx_rate_used: Optional[Decimal] = None  # FX rate used for conversion
 
 
 @dataclass
@@ -39,7 +44,7 @@ class BrokerageParseResult:
     statement_date: Optional[date]
     statement_start_date: Optional[date]
 
-    # Totals from statement
+    # Totals from statement (in base currency)
     total_value: Decimal
     total_cash: Decimal
     total_securities: Decimal
@@ -58,6 +63,11 @@ class BrokerageParseResult:
 
     # Raw data for debugging
     raw_metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Multi-currency support
+    base_currency: str = "USD"  # Account's base currency
+    fx_rates: Dict[str, Decimal] = field(default_factory=dict)  # e.g., {"EUR": Decimal("1.1746")}
+    cash_by_currency: Dict[str, Decimal] = field(default_factory=dict)  # e.g., {"USD": 73438.91, "EUR": -59696.65}
 
 
 def detect_brokerage_provider(text: str) -> Optional[str]:
@@ -133,25 +143,29 @@ def detect_account_type(text: str, provider: str) -> str:
     """
     text_lower = text.lower()
 
+    # Helper function to check for whole word match (avoid matching 'ira' in 'california')
+    def has_word(word: str) -> bool:
+        return bool(re.search(rf'\b{word}\b', text_lower))
+
     # Roth IRA indicators
     if "roth ira" in text_lower or "roth individual" in text_lower:
         return "IRA_ROTH"
 
-    # Traditional IRA indicators
+    # Traditional IRA indicators - use word boundary to avoid matching 'ira' in other words
     if ("traditional ira" in text_lower or "rollover ira" in text_lower or
-            ("ira" in text_lower and "roth" not in text_lower)):
+            (has_word("ira") and "roth" not in text_lower)):
         return "IRA_TRADITIONAL"
 
     # 401(k) indicators
     if "401(k)" in text_lower or "401k" in text_lower or "retirement plan" in text_lower:
         return "RETIREMENT_401K"
 
-    # Stock plan indicators
-    if provider == "equatex" or "stock plan" in text_lower or "rsu" in text_lower or "espp" in text_lower:
+    # Stock plan indicators - use word boundary to avoid matching 'rsu' in 'pursuant'
+    if provider == "equatex" or "stock plan" in text_lower or has_word("rsu") or has_word("espp"):
         return "STOCK_PLAN"
 
     # Joint/Individual brokerage (default for taxable)
-    if "joint" in text_lower or "individual" in text_lower or "brokerage" in text_lower:
+    if "joint" in text_lower or "individual" in text_lower or "brokerage" in text_lower or "survivorship" in text_lower:
         return "BROKERAGE"
 
     return "BROKERAGE"  # Default

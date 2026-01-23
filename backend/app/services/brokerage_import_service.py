@@ -17,6 +17,7 @@ from app.models.import_record import ImportRecord, SourceType, ImportStatus
 from app.models.account import Account, AccountType
 from app.models.holdings_snapshot import HoldingsSnapshot
 from app.models.position import Position, PositionType, AssetClass
+from app.models.fx_rate import FxRate
 from app.services.file_parser.brokerage_parser import (
     BrokerageParseResult,
     PositionData,
@@ -24,6 +25,7 @@ from app.services.file_parser.brokerage_parser import (
 )
 from app.services.file_parser.fidelity_brokerage_parser import FidelityBrokerageParser
 from app.services.file_parser.schwab_brokerage_parser import SchwabBrokerageParser
+from app.services.file_parser.ibkr_brokerage_parser import IBKRBrokerageParser
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,7 @@ class BrokerageImportService:
             os.remove(temp_path)
             raise ValueError(
                 "Could not detect brokerage provider. "
-                "Currently supported: Fidelity, Schwab"
+                "Currently supported: Fidelity, Schwab, Interactive Brokers (IBKR)"
             )
 
         # Create import record
@@ -116,7 +118,8 @@ class BrokerageImportService:
             import_id: Import record ID
 
         Returns:
-            Dict with parsed holdings preview
+            Dict with parsed holdings preview. For multi-account statements,
+            returns an "accounts" array with multiple results.
         """
         import_record = self.db.query(ImportRecord).filter(
             ImportRecord.id == import_id
@@ -136,7 +139,12 @@ class BrokerageImportService:
         provider = metadata.get("provider")
         parser = self._get_parser(provider, temp_path)
 
-        # Parse the statement
+        # Check for multi-account statement (IBKR or Fidelity)
+        if hasattr(parser, 'is_multi_account_statement'):
+            if parser.is_multi_account_statement():
+                return await self._parse_multi_account(import_record, parser, metadata)
+
+        # Single account parsing
         result = parser.parse()
 
         if not result.success:
@@ -147,16 +155,80 @@ class BrokerageImportService:
 
         # Store parse result in metadata for commit
         metadata["parse_result"] = self._result_to_dict(result)
+        metadata["is_multi_account"] = False
         import_record.import_metadata = metadata
         flag_modified(import_record, "import_metadata")  # Ensure SQLAlchemy detects JSON change
         import_record.status = ImportStatus.PROCESSING
         self.db.commit()
 
+        return self._format_single_result(import_id, result)
+
+    async def _parse_multi_account(
+        self,
+        import_record: ImportRecord,
+        parser: Any,  # Can be IBKRBrokerageParser or FidelityBrokerageParser
+        metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Parse multi-account statement (IBKR or Fidelity).
+
+        Args:
+            import_record: The import record
+            parser: Parser instance with parse_all() method
+            metadata: Import metadata
+
+        Returns:
+            Dict with multiple account results
+        """
+        results = parser.parse_all()
+
+        if not results:
+            import_record.status = ImportStatus.FAILED
+            import_record.error_message = "No accounts found in statement"
+            self.db.commit()
+            raise ValueError("No accounts found in multi-account statement")
+
+        # Check if any failed
+        failed = [r for r in results if not r.success]
+        if len(failed) == len(results):
+            import_record.status = ImportStatus.FAILED
+            import_record.error_message = "; ".join(failed[0].errors)
+            self.db.commit()
+            raise ValueError(f"Failed to parse all accounts: {'; '.join(failed[0].errors)}")
+
+        # Store all parse results in metadata
+        metadata["is_multi_account"] = True
+        metadata["account_count"] = len(results)
+        metadata["parse_results"] = [self._result_to_dict(r) for r in results]
+        import_record.import_metadata = metadata
+        flag_modified(import_record, "import_metadata")
+        import_record.status = ImportStatus.PROCESSING
+        self.db.commit()
+
+        return {
+            "import_id": import_record.id,
+            "is_multi_account": True,
+            "account_count": len(results),
+            "accounts": [
+                self._format_single_result(import_record.id, r, index=i)
+                for i, r in enumerate(results)
+            ],
+            "total_value": sum(float(r.total_value) for r in results if r.success),
+        }
+
+    def _format_single_result(
+        self,
+        import_id: str,
+        result: BrokerageParseResult,
+        index: int = 0
+    ) -> Dict[str, Any]:
+        """Format a single parse result for API response."""
         return {
             "import_id": import_id,
+            "account_index": index,
             "provider": result.provider,
             "account_type": result.account_type,
             "account_identifier": result.account_identifier,
+            "account_alias": result.raw_metadata.get("account_alias", "") if hasattr(result, "raw_metadata") and result.raw_metadata else "",
             "statement_date": result.statement_date.isoformat() if result.statement_date else None,
             "total_value": float(result.total_value),
             "total_cash": float(result.total_cash),
@@ -174,10 +246,16 @@ class BrokerageImportService:
                     "market_value": float(p.market_value),
                     "cost_basis": float(p.cost_basis) if p.cost_basis else None,
                     "asset_class": p.asset_class,
+                    "currency": p.currency,
+                    "market_value_usd": float(p.market_value_usd) if p.market_value_usd else None,
+                    "fx_rate_used": float(p.fx_rate_used) if p.fx_rate_used else None,
                 }
                 for p in result.positions
             ],
             "warnings": result.warnings,
+            "base_currency": result.base_currency,
+            "fx_rates": {k: float(v) for k, v in result.fx_rates.items()} if result.fx_rates else {},
+            "cash_by_currency": {k: float(v) for k, v in result.cash_by_currency.items()} if result.cash_by_currency else {},
         }
 
     async def commit(
@@ -185,7 +263,8 @@ class BrokerageImportService:
         import_id: str,
         account_id: Optional[str] = None,
         create_account: bool = True,
-        account_name: Optional[str] = None
+        account_name: Optional[str] = None,
+        account_index: Optional[int] = None
     ) -> Dict[str, Any]:
         """Commit parsed holdings to database.
 
@@ -194,9 +273,10 @@ class BrokerageImportService:
             account_id: Optional existing account ID
             create_account: If True, create new account if needed
             account_name: Name for new account
+            account_index: For multi-account, which account to commit (None = all)
 
         Returns:
-            Dict with snapshot ID and summary
+            Dict with snapshot ID and summary (or array for multi-account)
         """
         import_record = self.db.query(ImportRecord).filter(
             ImportRecord.id == import_id
@@ -206,6 +286,13 @@ class BrokerageImportService:
             raise ValueError(f"Import record {import_id} not found")
 
         metadata = import_record.import_metadata or {}
+
+        # Check for multi-account statement
+        if metadata.get("is_multi_account"):
+            return await self._commit_multi_account(
+                import_record, metadata, account_index, create_account
+            )
+
         parse_result = metadata.get("parse_result")
 
         if not parse_result:
@@ -216,19 +303,29 @@ class BrokerageImportService:
             account = self.db.query(Account).filter(Account.id == account_id).first()
             if not account:
                 raise ValueError(f"Account {account_id} not found")
-        elif create_account:
-            account = self._create_account_from_result(parse_result, account_name)
         else:
-            raise ValueError("No account specified and create_account is False")
+            # Try to find existing account with matching identifier and provider
+            account = self._find_existing_account(parse_result)
+            if not account and create_account:
+                account = self._create_account_from_result(parse_result, account_name)
+            elif not account:
+                raise ValueError("No matching account found and create_account is False")
 
         # Update import record with account
         import_record.account_id = account.id
+
+        # Get statement date
+        statement_date_val = (
+            datetime.fromisoformat(parse_result["statement_date"]).date()
+            if parse_result.get("statement_date")
+            else date.today()
+        )
 
         # Create holdings snapshot
         snapshot = HoldingsSnapshot(
             account_id=account.id,
             import_id=import_record.id,
-            statement_date=datetime.fromisoformat(parse_result["statement_date"]).date() if parse_result.get("statement_date") else date.today(),
+            statement_date=statement_date_val,
             statement_start_date=datetime.fromisoformat(parse_result["statement_start_date"]).date() if parse_result.get("statement_start_date") else None,
             total_value=Decimal(str(parse_result["total_value"])),
             total_cash=Decimal(str(parse_result["total_cash"])),
@@ -238,10 +335,27 @@ class BrokerageImportService:
             reconciliation_diff=Decimal(str(parse_result["reconciliation_diff"])),
             source_file_hash=import_record.file_hash,
             raw_metadata=parse_result,
+            # Multi-currency support
+            base_currency=parse_result.get("base_currency", "USD"),
+            cash_balances=parse_result.get("cash_by_currency"),
         )
 
         self.db.add(snapshot)
         self.db.flush()  # Get snapshot ID
+
+        # Create FX rates if present
+        fx_rates = parse_result.get("fx_rates", {})
+        for currency, rate in fx_rates.items():
+            if currency != "USD":  # Don't store USD/USD rate
+                fx_rate = FxRate(
+                    snapshot_id=snapshot.id,
+                    from_currency=currency,
+                    to_currency="USD",
+                    rate=Decimal(str(rate)),
+                    rate_date=statement_date_val,
+                    source="statement",
+                )
+                self.db.add(fx_rate)
 
         # Create positions
         for idx, pos_data in enumerate(parse_result.get("positions", [])):
@@ -256,6 +370,10 @@ class BrokerageImportService:
                 cost_basis=Decimal(str(pos_data["cost_basis"])) if pos_data.get("cost_basis") else None,
                 asset_class=AssetClass(pos_data.get("asset_class", "UNKNOWN")),
                 row_index=idx,
+                # Multi-currency support
+                currency=pos_data.get("currency", "USD"),
+                market_value_usd=Decimal(str(pos_data["market_value_usd"])) if pos_data.get("market_value_usd") else None,
+                fx_rate_used=Decimal(str(pos_data["fx_rate_used"])) if pos_data.get("fx_rate_used") else None,
             )
             self.db.add(position)
 
@@ -274,6 +392,168 @@ class BrokerageImportService:
             "snapshot_id": snapshot.id,
             "account_id": account.id,
             "account_name": account.name,
+            "statement_date": snapshot.statement_date.isoformat(),
+            "total_value": float(snapshot.total_value),
+            "position_count": len(parse_result.get("positions", [])),
+            "is_reconciled": snapshot.is_reconciled,
+        }
+
+    async def _commit_multi_account(
+        self,
+        import_record: ImportRecord,
+        metadata: Dict[str, Any],
+        account_index: Optional[int],
+        create_account: bool
+    ) -> Dict[str, Any]:
+        """Commit multi-account IBKR statement.
+
+        Args:
+            import_record: The import record
+            metadata: Import metadata with parse_results array
+            account_index: If specified, only commit this account index
+            create_account: Whether to create new accounts
+
+        Returns:
+            Dict with array of commit results
+        """
+        parse_results = metadata.get("parse_results", [])
+        if not parse_results:
+            raise ValueError("No parse results found. Call parse first.")
+
+        # If account_index specified, only commit that account
+        if account_index is not None:
+            if account_index >= len(parse_results):
+                raise ValueError(f"Account index {account_index} out of range (0-{len(parse_results)-1})")
+            parse_results = [(account_index, parse_results[account_index])]
+        else:
+            parse_results = list(enumerate(parse_results))
+
+        results = []
+        for idx, parse_result in parse_results:
+            result = self._commit_single_account(
+                import_record, parse_result, create_account, idx
+            )
+            results.append(result)
+
+        # Update import record status
+        import_record.status = ImportStatus.SUCCESS
+        import_record.completed_at = datetime.utcnow()
+
+        # Clean up temp file (only when all accounts committed)
+        if account_index is None:
+            temp_path = metadata.get("temp_path")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        self.db.commit()
+
+        return {
+            "is_multi_account": True,
+            "accounts_committed": len(results),
+            "total_value": sum(r["total_value"] for r in results),
+            "results": results,
+        }
+
+    def _commit_single_account(
+        self,
+        import_record: ImportRecord,
+        parse_result: Dict[str, Any],
+        create_account: bool,
+        account_index: int = 0
+    ) -> Dict[str, Any]:
+        """Commit a single account from parse result.
+
+        Args:
+            import_record: The import record
+            parse_result: Parse result dict for this account
+            create_account: Whether to create new account
+            account_index: Index for account naming
+
+        Returns:
+            Dict with commit result
+        """
+        # Generate account name using alias if available
+        account_alias = parse_result.get("raw_metadata", {}).get("account_alias", "")
+        if account_alias:
+            account_name = f"IBKR {account_alias} {parse_result['account_identifier']}"
+        else:
+            account_name = None
+
+        # Try to find existing account first, then create if not found
+        account = self._find_existing_account(parse_result)
+        if not account and create_account:
+            account = self._create_account_from_result(parse_result, account_name)
+        elif not account:
+            raise ValueError("No matching account found and create_account is False")
+
+        # Get statement date
+        statement_date_val = (
+            datetime.fromisoformat(parse_result["statement_date"]).date()
+            if parse_result.get("statement_date")
+            else date.today()
+        )
+
+        # Create holdings snapshot
+        snapshot = HoldingsSnapshot(
+            account_id=account.id,
+            import_id=import_record.id,
+            statement_date=statement_date_val,
+            statement_start_date=datetime.fromisoformat(parse_result["statement_start_date"]).date() if parse_result.get("statement_start_date") else None,
+            total_value=Decimal(str(parse_result["total_value"])),
+            total_cash=Decimal(str(parse_result["total_cash"])),
+            total_securities=Decimal(str(parse_result["total_securities"])),
+            calculated_total=Decimal(str(parse_result["calculated_total"])),
+            is_reconciled=parse_result["is_reconciled"],
+            reconciliation_diff=Decimal(str(parse_result["reconciliation_diff"])),
+            source_file_hash=import_record.file_hash,
+            raw_metadata=parse_result,
+            # Multi-currency support
+            base_currency=parse_result.get("base_currency", "USD"),
+            cash_balances=parse_result.get("cash_by_currency"),
+        )
+
+        self.db.add(snapshot)
+        self.db.flush()  # Get snapshot ID
+
+        # Create FX rates if present
+        fx_rates = parse_result.get("fx_rates", {})
+        for currency, rate in fx_rates.items():
+            if currency != "USD":  # Don't store USD/USD rate
+                fx_rate = FxRate(
+                    snapshot_id=snapshot.id,
+                    from_currency=currency,
+                    to_currency="USD",
+                    rate=Decimal(str(rate)),
+                    rate_date=statement_date_val,
+                    source="statement",
+                )
+                self.db.add(fx_rate)
+
+        # Create positions
+        for idx, pos_data in enumerate(parse_result.get("positions", [])):
+            position = Position(
+                snapshot_id=snapshot.id,
+                symbol=pos_data.get("symbol"),
+                security_name=pos_data["security_name"],
+                security_type=PositionType(pos_data.get("security_type", "OTHER")),
+                quantity=Decimal(str(pos_data["quantity"])) if pos_data.get("quantity") else None,
+                price=Decimal(str(pos_data["price"])) if pos_data.get("price") else None,
+                market_value=Decimal(str(pos_data["market_value"])),
+                cost_basis=Decimal(str(pos_data["cost_basis"])) if pos_data.get("cost_basis") else None,
+                asset_class=AssetClass(pos_data.get("asset_class", "UNKNOWN")),
+                row_index=idx,
+                # Multi-currency support
+                currency=pos_data.get("currency", "USD"),
+                market_value_usd=Decimal(str(pos_data["market_value_usd"])) if pos_data.get("market_value_usd") else None,
+                fx_rate_used=Decimal(str(pos_data["fx_rate_used"])) if pos_data.get("fx_rate_used") else None,
+            )
+            self.db.add(position)
+
+        return {
+            "snapshot_id": snapshot.id,
+            "account_id": account.id,
+            "account_name": account.name,
+            "account_alias": account_alias,
             "statement_date": snapshot.statement_date.isoformat(),
             "total_value": float(snapshot.total_value),
             "position_count": len(parse_result.get("positions", [])),
@@ -372,13 +652,16 @@ class BrokerageImportService:
     ) -> Dict[str, Any]:
         """Calculate net worth across brokerage accounts.
 
+        Net worth at any date = sum of (latest snapshot per account as of that date).
+        If an account has no snapshot on a given date, we carry forward its most recent value.
+
         Args:
             account_ids: Optional list of account IDs to include
 
         Returns:
             Current net worth and history
         """
-        # Get latest snapshot for each account
+        # Get latest snapshot for each account (for current total)
         subquery = self.db.query(
             HoldingsSnapshot.account_id,
             func.max(HoldingsSnapshot.statement_date).label("max_date")
@@ -397,17 +680,41 @@ class BrokerageImportService:
 
         current_total = sum(float(s.total_value) for s in latest_snapshots)
 
-        # Get history (all snapshots, summed by date)
-        history_query = self.db.query(
-            HoldingsSnapshot.statement_date,
-            func.sum(HoldingsSnapshot.total_value).label("total")
-        )
+        # Get all snapshots for history calculation
+        all_snapshots_query = self.db.query(HoldingsSnapshot)
         if account_ids:
-            history_query = history_query.filter(HoldingsSnapshot.account_id.in_(account_ids))
+            all_snapshots_query = all_snapshots_query.filter(
+                HoldingsSnapshot.account_id.in_(account_ids)
+            )
+        all_snapshots = all_snapshots_query.order_by(HoldingsSnapshot.statement_date).all()
 
-        history = history_query.group_by(
-            HoldingsSnapshot.statement_date
-        ).order_by(HoldingsSnapshot.statement_date).all()
+        # Build history with carry-forward logic
+        # For each unique date, net worth = sum of latest snapshot per account as of that date
+        history = []
+        if all_snapshots:
+            # Get unique dates
+            unique_dates = sorted(set(s.statement_date for s in all_snapshots))
+
+            # Track latest value per account (carry-forward)
+            account_latest_values: Dict[str, float] = {}
+
+            # Group snapshots by date for efficient lookup
+            from collections import defaultdict
+            snapshots_by_date: Dict[date, List[HoldingsSnapshot]] = defaultdict(list)
+            for s in all_snapshots:
+                snapshots_by_date[s.statement_date].append(s)
+
+            for d in unique_dates:
+                # Update account values for snapshots on this date
+                for s in snapshots_by_date[d]:
+                    account_latest_values[s.account_id] = float(s.total_value)
+
+                # Net worth = sum of all accounts' latest values
+                total = sum(account_latest_values.values())
+                history.append({
+                    "date": d.isoformat(),
+                    "total": total,
+                })
 
         return {
             "current_total": current_total,
@@ -421,13 +728,254 @@ class BrokerageImportService:
                 }
                 for s in latest_snapshots
             ],
-            "history": [
-                {
-                    "date": h.statement_date.isoformat(),
-                    "total": float(h.total),
+            "history": history,
+        }
+
+    def get_net_worth_by_account(
+        self,
+        account_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Get net worth history broken down by account.
+
+        Uses carry-forward logic: for each date, each account's value is its
+        latest snapshot as of that date (or carried forward from earlier).
+
+        Args:
+            account_ids: Optional list of account IDs to include
+
+        Returns:
+            History with per-account values for stacked charts
+        """
+        from collections import defaultdict
+
+        # Get all snapshots with account info
+        query = self.db.query(HoldingsSnapshot).join(Account)
+
+        if account_ids:
+            query = query.filter(HoldingsSnapshot.account_id.in_(account_ids))
+
+        snapshots = query.order_by(HoldingsSnapshot.statement_date).all()
+
+        if not snapshots:
+            return {"accounts": [], "history": []}
+
+        # Get unique dates and accounts
+        unique_dates = sorted(set(s.statement_date for s in snapshots))
+
+        # Build account info lookup
+        all_accounts = {}
+        for s in snapshots:
+            if s.account_id not in all_accounts:
+                all_accounts[s.account_id] = {
+                    "account_id": s.account_id,
+                    "account_name": s.account.name,
+                    "account_type": s.account.account_type.value,
                 }
-                for h in history
-            ],
+
+        # Group snapshots by date
+        snapshots_by_date: Dict[date, List[HoldingsSnapshot]] = defaultdict(list)
+        for s in snapshots:
+            snapshots_by_date[s.statement_date].append(s)
+
+        # Build history with carry-forward logic
+        account_latest_values: Dict[str, Dict] = {}  # account_id -> {account info + value}
+        history = []
+
+        for d in unique_dates:
+            # Update account values for snapshots on this date
+            for s in snapshots_by_date[d]:
+                account_latest_values[s.account_id] = {
+                    "account_id": s.account_id,
+                    "account_name": s.account.name,
+                    "account_type": s.account.account_type.value,
+                    "value": float(s.total_value),
+                }
+
+            # Build accounts list for this date (all accounts with their current values)
+            accounts_data = list(account_latest_values.values())
+            total = sum(a["value"] for a in accounts_data)
+
+            history.append({
+                "date": d.isoformat(),
+                "total": total,
+                "accounts": accounts_data,
+            })
+
+        return {
+            "accounts": list(all_accounts.values()),
+            "history": history,
+        }
+
+    def get_asset_class_breakdown(
+        self,
+        account_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Get asset class breakdown of current holdings.
+
+        Uses carry-forward logic: for each date, each account's positions are from its
+        latest snapshot as of that date.
+
+        Args:
+            account_ids: Optional list of account IDs to include
+
+        Returns:
+            Current breakdown by asset class with history
+        """
+        from collections import defaultdict
+
+        # Get latest snapshot for each account (for current breakdown)
+        subquery = self.db.query(
+            HoldingsSnapshot.account_id,
+            func.max(HoldingsSnapshot.statement_date).label("max_date")
+        ).group_by(HoldingsSnapshot.account_id).subquery()
+
+        query = self.db.query(HoldingsSnapshot).join(
+            subquery,
+            (HoldingsSnapshot.account_id == subquery.c.account_id) &
+            (HoldingsSnapshot.statement_date == subquery.c.max_date)
+        )
+
+        if account_ids:
+            query = query.filter(HoldingsSnapshot.account_id.in_(account_ids))
+
+        latest_snapshots = query.all()
+        latest_snapshot_ids = [s.id for s in latest_snapshots]
+
+        # Get positions from latest snapshots and aggregate by asset class
+        current_breakdown = {
+            "EQUITY": 0.0,
+            "FIXED_INCOME": 0.0,
+            "CASH": 0.0,
+            "ALTERNATIVE": 0.0,
+            "UNKNOWN": 0.0,
+        }
+
+        # Get total_value from snapshots (this is the true net worth)
+        snapshot_total_value = sum(float(s.total_value) for s in latest_snapshots)
+
+        if latest_snapshot_ids:
+            positions = self.db.query(Position).filter(
+                Position.snapshot_id.in_(latest_snapshot_ids)
+            ).all()
+
+            for p in positions:
+                asset_class = p.asset_class.value if p.asset_class else "UNKNOWN"
+                # Use market_value_usd for multi-currency support, fallback to market_value
+                value = float(p.market_value_usd) if p.market_value_usd else float(p.market_value)
+                current_breakdown[asset_class] += value
+
+            # Calculate implied cash as difference between total_value and positions
+            # This ensures the breakdown total matches net worth exactly
+            position_total = sum(current_breakdown.values())
+            implied_cash = snapshot_total_value - position_total
+            if implied_cash > 0:
+                current_breakdown["CASH"] += implied_cash
+
+        current_total = sum(current_breakdown.values())
+
+        # Get all snapshots for history calculation
+        all_snapshots_query = self.db.query(HoldingsSnapshot)
+        if account_ids:
+            all_snapshots_query = all_snapshots_query.filter(
+                HoldingsSnapshot.account_id.in_(account_ids)
+            )
+        all_snapshots = all_snapshots_query.order_by(HoldingsSnapshot.statement_date).all()
+
+        if not all_snapshots:
+            return {
+                "current": {
+                    "equity": 0.0,
+                    "fixed_income": 0.0,
+                    "cash": 0.0,
+                    "alternative": 0.0,
+                    "unknown": 0.0,
+                    "total": 0.0,
+                },
+                "history": [],
+            }
+
+        # Get unique dates
+        unique_dates = sorted(set(s.statement_date for s in all_snapshots))
+
+        # Get positions for all snapshots
+        all_snapshot_ids = [s.id for s in all_snapshots]
+        all_positions = self.db.query(Position).filter(
+            Position.snapshot_id.in_(all_snapshot_ids)
+        ).all() if all_snapshot_ids else []
+
+        # Map positions to snapshots
+        snapshot_positions: Dict[str, List[Position]] = defaultdict(list)
+        for p in all_positions:
+            snapshot_positions[p.snapshot_id].append(p)
+
+        # Map snapshot_id to snapshot object (for accessing total_cash)
+        snapshot_by_id: Dict[str, HoldingsSnapshot] = {s.id: s for s in all_snapshots}
+
+        # Group snapshots by date
+        snapshots_by_date: Dict[date, List[HoldingsSnapshot]] = defaultdict(list)
+        for s in all_snapshots:
+            snapshots_by_date[s.statement_date].append(s)
+
+        # Build history with carry-forward logic
+        # Track latest snapshot ID per account
+        account_latest_snapshot_id: Dict[str, str] = {}
+        history = []
+
+        for d in unique_dates:
+            # Update latest snapshot per account for this date
+            for s in snapshots_by_date[d]:
+                account_latest_snapshot_id[s.account_id] = s.id
+
+            # Aggregate positions from all accounts' latest snapshots
+            breakdown = {
+                "EQUITY": 0.0,
+                "FIXED_INCOME": 0.0,
+                "CASH": 0.0,
+                "ALTERNATIVE": 0.0,
+                "UNKNOWN": 0.0,
+            }
+
+            # Calculate total_value for this date (sum of latest snapshots per account)
+            date_total_value = 0.0
+            for snapshot_id in account_latest_snapshot_id.values():
+                # Add positions (use market_value_usd for multi-currency support)
+                for p in snapshot_positions.get(snapshot_id, []):
+                    asset_class = p.asset_class.value if p.asset_class else "UNKNOWN"
+                    value = float(p.market_value_usd) if p.market_value_usd else float(p.market_value)
+                    breakdown[asset_class] += value
+
+                # Track total_value from snapshot
+                snapshot = snapshot_by_id.get(snapshot_id)
+                if snapshot:
+                    date_total_value += float(snapshot.total_value)
+
+            # Calculate implied cash as difference between total_value and positions
+            # This ensures the breakdown total matches net worth exactly
+            position_total = sum(breakdown.values())
+            implied_cash = date_total_value - position_total
+            if implied_cash > 0:
+                breakdown["CASH"] += implied_cash
+
+            history.append({
+                "date": d.isoformat(),
+                "equity": breakdown["EQUITY"],
+                "fixed_income": breakdown["FIXED_INCOME"],
+                "cash": breakdown["CASH"],
+                "alternative": breakdown["ALTERNATIVE"],
+                "unknown": breakdown["UNKNOWN"],
+                "total": sum(breakdown.values()),
+            })
+
+        return {
+            "current": {
+                "equity": current_breakdown["EQUITY"],
+                "fixed_income": current_breakdown["FIXED_INCOME"],
+                "cash": current_breakdown["CASH"],
+                "alternative": current_breakdown["ALTERNATIVE"],
+                "unknown": current_breakdown["UNKNOWN"],
+                "total": current_total,
+            },
+            "history": history,
         }
 
     def _get_parser(self, provider: str, file_path: str):
@@ -436,8 +984,35 @@ class BrokerageImportService:
             return FidelityBrokerageParser(file_path)
         elif provider == "schwab":
             return SchwabBrokerageParser(file_path)
+        elif provider == "ibkr":
+            return IBKRBrokerageParser(file_path)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
+
+    def _find_existing_account(
+        self,
+        parse_result: Dict[str, Any]
+    ) -> Optional[Account]:
+        """Find existing account matching the parse result.
+
+        Matches by account_number_last4 and institution (provider).
+        This allows multiple imports to the same account to be linked together.
+        """
+        provider = parse_result.get("provider", "").title()
+        account_identifier = parse_result.get("account_identifier", "")
+        last4 = account_identifier[-4:] if len(account_identifier) >= 4 else None
+
+        if not last4:
+            return None
+
+        # Find account with matching last4 and institution
+        account = self.db.query(Account).filter(
+            Account.account_number_last4 == last4,
+            Account.institution == provider,
+            Account.is_active == True
+        ).first()
+
+        return account
 
     def _create_account_from_result(
         self,
@@ -509,9 +1084,17 @@ class BrokerageImportService:
                     "cost_basis": str(p.cost_basis) if p.cost_basis else None,
                     "asset_class": p.asset_class,
                     "row_index": p.row_index,
+                    # Multi-currency support
+                    "currency": p.currency,
+                    "market_value_usd": str(p.market_value_usd) if p.market_value_usd else None,
+                    "fx_rate_used": str(p.fx_rate_used) if p.fx_rate_used else None,
                 }
                 for p in result.positions
             ],
             "errors": result.errors,
             "warnings": result.warnings,
+            # Multi-currency support
+            "base_currency": result.base_currency,
+            "fx_rates": {k: str(v) for k, v in result.fx_rates.items()} if result.fx_rates else {},
+            "cash_by_currency": {k: str(v) for k, v in result.cash_by_currency.items()} if result.cash_by_currency else {},
         }

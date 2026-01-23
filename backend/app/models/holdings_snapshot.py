@@ -31,8 +31,12 @@ class HoldingsSnapshot(Base):
     is_reconciled = Column(Boolean, default=False)  # Does calculated ≈ reported?
     reconciliation_diff = Column(Numeric(18, 2))  # Difference amount
 
+    # Multi-currency support
+    base_currency = Column(String(3), default="USD")  # Account's base currency
+    cash_balances = Column(JSON)  # Cash by currency: {"USD": 73438.91, "EUR": -59696.65}
+
     # Metadata
-    currency = Column(String(3), default="USD")
+    currency = Column(String(3), default="USD")  # Legacy, use base_currency for new
     source_file_hash = Column(String(64))  # SHA256 for dedup
     raw_metadata = Column(JSON)  # Original extracted data for debugging
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -41,6 +45,7 @@ class HoldingsSnapshot(Base):
     account = relationship("Account", back_populates="holdings_snapshots")
     import_record = relationship("ImportRecord", back_populates="holdings_snapshot")
     positions = relationship("Position", back_populates="snapshot", cascade="all, delete-orphan")
+    fx_rates = relationship("FxRate", back_populates="snapshot", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<HoldingsSnapshot(id={self.id}, date={self.statement_date}, value={self.total_value})>"
