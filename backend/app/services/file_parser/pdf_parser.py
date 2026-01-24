@@ -1525,6 +1525,10 @@ class PDFParser(BaseParser):
                     metadata={'format': 'allybank'}
                 )
 
+            # Extract balances and statement date for net worth tracking
+            balances = self._extract_allybank_balances(all_text)
+            statement_date = self._extract_allybank_statement_date(all_text)
+
             return ParseResult(
                 success=True,
                 transactions=transactions,
@@ -1534,6 +1538,8 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'allybank',
+                    'balances': balances,
+                    'statement_date': statement_date,
                 }
             )
 
@@ -1857,6 +1863,68 @@ class PDFParser(BaseParser):
 
         return cleaned.strip() if cleaned else description
 
+    def _extract_allybank_balances(self, text: str) -> Dict[str, Dict[str, Any]]:
+        """Extract account balances from Ally Bank statement.
+
+        Ally Bank balance format:
+        AccountName AccountNumber Beginning Balance Ending Balance
+        Spending Account xxxxxx1127 $8,975.99 $35,979.20
+        Savings Account xxxxxx3465 $90,147.24 $61,675.61
+
+        Args:
+            text: Full text of the Ally Bank statement
+
+        Returns:
+            Dict with account type as key: {'spending': {'last4': '1127', 'beginning': 8975.99, 'ending': 35979.20}, ...}
+        """
+        balances = {}
+
+        # Pattern for account balance rows
+        # Format: (Spending|Savings) Account xxxxxx1234 $XX,XXX.XX $XX,XXX.XX
+        pattern = r'(Spending|Savings)\s+Account\s+x{4,6}(\d{4})\s+\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})'
+
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        for match in matches:
+            account_type = match[0].lower()  # 'spending' or 'savings'
+            last4 = match[1]
+            beginning = float(match[2].replace(',', ''))
+            ending = float(match[3].replace(',', ''))
+
+            balances[account_type] = {
+                'last4': last4,
+                'beginning': beginning,
+                'ending': ending,
+            }
+
+        return balances
+
+    def _extract_allybank_statement_date(self, text: str) -> Optional[str]:
+        """Extract statement date from Ally Bank statement.
+
+        Ally Bank format: "Statement Date 04/05/2025" or "Statement Date\n04/05/2025"
+
+        Args:
+            text: Full text of the Ally Bank statement
+
+        Returns:
+            ISO format date string (YYYY-MM-DD) or None
+        """
+        from datetime import datetime
+
+        # Pattern for statement date - may have newline between label and date
+        pattern = r'Statement\s+Date\s*[\n]?\s*(\d{2}/\d{2}/\d{4})'
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+            try:
+                date_str = match.group(1)
+                date_obj = datetime.strptime(date_str, "%m/%d/%Y")
+                return date_obj.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        return None
+
     def _parse_chasebank_statement(self) -> ParseResult:
         """Parse Chase Bank checking/savings statement.
 
@@ -1891,11 +1959,15 @@ class PDFParser(BaseParser):
                     metadata={'format': 'chasebank'}
                 )
 
-            # Extract statement year from header
+            # Extract statement year and date from header
             statement_year = self._extract_chasebank_year(all_text)
+            statement_date = self._extract_chasebank_statement_date(all_text)
 
             # Extract transactions
             transactions = self._extract_chasebank_transactions(all_text, statement_year)
+
+            # Extract balances for net worth tracking
+            balances = self._extract_chasebank_balances(all_text)
 
             if not transactions:
                 return ParseResult(
@@ -1915,6 +1987,8 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'format': 'chasebank',
                     'statement_year': statement_year,
+                    'statement_date': statement_date,
+                    'balances': balances,
                 }
             )
 
@@ -2160,6 +2234,78 @@ class PDFParser(BaseParser):
             cleaned = cleaned.title()
 
         return cleaned.strip() if cleaned else description
+
+    def _extract_chasebank_balances(self, text: str) -> Dict[str, Dict[str, Any]]:
+        """Extract account balances from Chase Bank statement.
+
+        Chase Bank consolidated balance summary format:
+        CONSOLIDATED BALANCE SUMMARY
+        ASSETS
+        Checking & Savings ACCOUNT BEGINNING BALANCE ENDING BALANCE
+                                   THIS PERIOD       THIS PERIOD
+        Chase Total Checking 000000756020322 $14,974.62 $5,754.30
+        Chase Savings 000003363208561 21,698.89 21,699.08
+
+        Args:
+            text: Full text of the Chase Bank statement
+
+        Returns:
+            Dict with account type as key: {'checking': {'last4': '0322', 'beginning': 14974.62, 'ending': 5754.30}, ...}
+        """
+        balances = {}
+
+        # Pattern for Chase Total Checking
+        # Format: Chase Total Checking XXXXXXXXX $XX,XXX.XX $XX,XXX.XX
+        checking_pattern = r'Chase\s+Total\s+Checking\s+\d*(\d{4})\s+\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})'
+        checking_match = re.search(checking_pattern, text, re.IGNORECASE)
+        if checking_match:
+            balances['checking'] = {
+                'last4': checking_match.group(1),
+                'beginning': float(checking_match.group(2).replace(',', '')),
+                'ending': float(checking_match.group(3).replace(',', '')),
+            }
+
+        # Pattern for Chase Savings
+        # Format: Chase Savings XXXXXXXXX XX,XXX.XX XX,XXX.XX (may or may not have $ prefix)
+        savings_pattern = r'Chase\s+Savings\s+\d*(\d{4})\s+\$?([\d,]+\.\d{2})\s+\$?([\d,]+\.\d{2})'
+        savings_match = re.search(savings_pattern, text, re.IGNORECASE)
+        if savings_match:
+            balances['savings'] = {
+                'last4': savings_match.group(1),
+                'beginning': float(savings_match.group(2).replace(',', '')),
+                'ending': float(savings_match.group(3).replace(',', '')),
+            }
+
+        return balances
+
+    def _extract_chasebank_statement_date(self, text: str) -> Optional[str]:
+        """Extract statement end date from Chase Bank statement.
+
+        Chase Bank format: "May 23, 2025throughJune 24, 2025" (use end date)
+
+        Args:
+            text: Full text of the Chase Bank statement
+
+        Returns:
+            ISO format date string (YYYY-MM-DD) or None
+        """
+        from datetime import datetime
+
+        # Pattern for date range in Chase Bank statement
+        # Format: "Month DD, YYYYthroughMonth DD, YYYY" (no space before "through")
+        pattern = r'(\w+\s+\d{1,2},\s*\d{4})\s*through\s*(\w+\s+\d{1,2},\s*\d{4})'
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+            try:
+                end_date_str = match.group(2)
+                # Parse "June 24, 2025"
+                date_obj = datetime.strptime(end_date_str, "%B %d, %Y")
+                return date_obj.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        return None
 
     def _extract_statement_year(self) -> int:
         """Extract statement year from PDF header.

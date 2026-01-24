@@ -717,10 +717,10 @@ export default function ImportsPage() {
                 Import More
               </button>
               <a
-                href="/investments"
+                href="/net-worth"
                 className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-center transition-all"
               >
-                View Investments
+                View Net Worth
               </a>
             </div>
           </div>

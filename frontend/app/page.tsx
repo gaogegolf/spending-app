@@ -438,7 +438,7 @@ export default function Dashboard() {
 
               {/* Net Worth - only show if brokerage data exists */}
               {netWorth && netWorth.current_total > 0 && (
-                <Link href="/investments" className="block">
+                <Link href="/net-worth" className="block">
                   <div className="group relative overflow-hidden bg-gradient-to-br from-violet-500 to-purple-700 rounded-2xl shadow-xl hover:shadow-violet-500/40 transform hover:-translate-y-1 transition-all duration-300 cursor-pointer">
                     <div className="absolute top-0 right-0 w-24 h-24 bg-white/10 rounded-full -mr-12 -mt-12"></div>
                     <div className="relative px-6 py-6">

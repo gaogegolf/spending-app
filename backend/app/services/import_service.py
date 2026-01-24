@@ -21,6 +21,7 @@ from app.services.file_parser.pdf_parser import PDFParser
 from app.services.classifier.llm_classifier import LLMClassifier
 from app.services.classifier.rule_engine import RuleEngine
 from app.services.deduplication import DeduplicationService
+from app.services.bank_balance_service import BankBalanceService
 from app.config import settings
 
 
@@ -465,6 +466,30 @@ class ImportService:
                     duplicate_count += 1
 
             self.db.commit()
+
+            # Create balance snapshots for bank statements (if available)
+            parse_metadata = import_record.import_metadata.get('parse_metadata', {})
+            balances = parse_metadata.get('balances')
+            statement_date = parse_metadata.get('statement_date')
+            statement_format = parse_metadata.get('format', '')
+
+            if balances and statement_date and statement_format in ('allybank', 'chasebank'):
+                # Map format to institution name
+                institution_map = {
+                    'allybank': 'Ally Bank',
+                    'chasebank': 'Chase',
+                }
+                institution = institution_map.get(statement_format, 'Unknown')
+
+                bank_service = BankBalanceService(self.db)
+                bank_service.create_balance_snapshots(
+                    import_record=import_record,
+                    balances=balances,
+                    statement_date=statement_date,
+                    institution=institution,
+                )
+                self.db.commit()
+                logger.info(f"Created bank balance snapshots for {institution}")
 
             # Update import record
             import_record.status = ImportStatus.SUCCESS

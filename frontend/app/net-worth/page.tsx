@@ -16,7 +16,7 @@ import {
 } from '@/lib/api';
 import { HoldingsSnapshot, NetWorthData, NetWorthByAccountData, AssetClassBreakdown, Position, BrokerageParseResult } from '@/lib/types';
 
-export default function InvestmentsPage() {
+export default function NetWorthPage() {
   const [netWorth, setNetWorth] = useState<NetWorthData | null>(null);
   const [netWorthByAccount, setNetWorthByAccount] = useState<NetWorthByAccountData | null>(null);
   const [assetBreakdown, setAssetBreakdown] = useState<AssetClassBreakdown | null>(null);
@@ -256,6 +256,8 @@ export default function InvestmentsPage() {
       case 'IRA_TRADITIONAL': return '📋';
       case 'RETIREMENT_401K': return '🏛️';
       case 'STOCK_PLAN': return '📊';
+      case 'CHECKING': return '🏦';
+      case 'SAVINGS': return '💰';
       default: return '📈';
     }
   }
@@ -267,6 +269,8 @@ export default function InvestmentsPage() {
       case 'IRA_TRADITIONAL': return 'Traditional IRA';
       case 'RETIREMENT_401K': return '401(k)';
       case 'STOCK_PLAN': return 'Stock Plan';
+      case 'CHECKING': return 'Checking';
+      case 'SAVINGS': return 'Savings';
       default: return type;
     }
   }
@@ -475,8 +479,8 @@ export default function InvestmentsPage() {
 
     // Get asset classes that have values in any period
     const activeAssetClasses = assetClassConfig.filter(ac =>
-      history.some(h => (h as Record<string, number>)[ac.key] > 0) ||
-      (current as Record<string, number>)[ac.key] > 0
+      history.some(h => (h as unknown as Record<string, number>)[ac.key] > 0) ||
+      (current as unknown as Record<string, number>)[ac.key] > 0
     );
 
     return (
@@ -553,13 +557,13 @@ export default function InvestmentsPage() {
         <div className="flex items-center justify-between mb-10">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
-              <span className="text-2xl">📈</span>
+              <span className="text-2xl">💎</span>
             </div>
             <div>
               <h1 className="text-4xl font-black bg-gradient-to-r from-gray-900 via-emerald-900 to-teal-900 bg-clip-text text-transparent">
-                Investments
+                Net Worth
               </h1>
-              <p className="text-gray-600 mt-1">Track your brokerage holdings and net worth</p>
+              <p className="text-gray-600 mt-1">Track your total net worth across all accounts</p>
             </div>
           </div>
           <button
@@ -592,50 +596,157 @@ export default function InvestmentsPage() {
         )}
 
         {/* Net Worth Summary */}
-        {!loading && netWorth && (
-          <div className="mb-8">
-            <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 p-8">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-xl font-bold text-gray-900">Net Worth</h2>
-                <span className="text-4xl font-black text-emerald-600">
-                  {formatCurrency(netWorth.current_total)}
-                </span>
+        {!loading && netWorth && (() => {
+          // Group accounts by category
+          const cashTypes = ['CHECKING', 'SAVINGS'];
+          const cashAccounts = netWorth.accounts.filter(a => cashTypes.includes(a.account_type));
+          const investmentAccounts = netWorth.accounts.filter(a => !cashTypes.includes(a.account_type));
+          const cashTotal = cashAccounts.reduce((sum, a) => sum + a.latest_value, 0);
+          const investmentTotal = investmentAccounts.reduce((sum, a) => sum + a.latest_value, 0);
+          const total = netWorth.current_total || 1;
+          const cashPercent = (cashTotal / total) * 100;
+          const investmentPercent = (investmentTotal / total) * 100;
+
+          return (
+          <div className="mb-8 space-y-4">
+            {/* Total Net Worth Card */}
+            <div className="bg-gradient-to-r from-emerald-600 to-teal-600 rounded-2xl shadow-xl p-6 text-white">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-emerald-100 text-sm font-medium uppercase tracking-wide">Total Net Worth</p>
+                  <p className="text-4xl font-black mt-1">{formatCurrency(netWorth.current_total)}</p>
+                </div>
+                <div className="text-6xl opacity-20">💎</div>
               </div>
 
-              {/* Accounts breakdown */}
+              {/* Allocation Bar */}
               {netWorth.accounts.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {netWorth.accounts.map((account) => (
-                    <div
-                      key={account.account_id}
-                      className="bg-gradient-to-br from-gray-50 to-white p-4 rounded-xl border border-gray-100 group relative"
-                    >
-                      {/* Delete button */}
-                      <button
-                        onClick={(e) => confirmDeleteAccount(account.account_id, account.account_name, e)}
-                        className="absolute top-2 right-2 p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                        title="Delete account"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
-                      <div className="flex items-center gap-3 mb-2">
-                        <span className="text-2xl">{getAccountTypeIcon(account.account_type)}</span>
-                        <div>
-                          <p className="font-semibold text-gray-900">{account.account_name}</p>
-                          <p className="text-xs text-gray-500">{getAccountTypeLabel(account.account_type)}</p>
+                <div className="mt-6">
+                  <div className="flex h-3 rounded-full overflow-hidden bg-white/20">
+                    {investmentPercent > 0 && (
+                      <div
+                        className="bg-white/90 transition-all"
+                        style={{ width: `${investmentPercent}%` }}
+                        title={`Investments: ${formatCurrency(investmentTotal)}`}
+                      />
+                    )}
+                    {cashPercent > 0 && (
+                      <div
+                        className="bg-amber-300 transition-all"
+                        style={{ width: `${cashPercent}%` }}
+                        title={`Cash: ${formatCurrency(cashTotal)}`}
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-between mt-2 text-xs">
+                    <div className="flex items-center gap-4">
+                      {investmentPercent > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2.5 h-2.5 rounded-full bg-white/90" />
+                          <span>Investments {investmentPercent.toFixed(0)}%</span>
                         </div>
-                      </div>
-                      <p className="text-xl font-bold text-gray-900">{formatCurrency(account.latest_value)}</p>
-                      <p className="text-xs text-gray-500 mt-1">as of {formatDate(account.statement_date)}</p>
+                      )}
+                      {cashPercent > 0 && (
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2.5 h-2.5 rounded-full bg-amber-300" />
+                          <span>Cash {cashPercent.toFixed(0)}%</span>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  </div>
                 </div>
               )}
             </div>
+
+            {/* Category Cards Side by Side */}
+            {netWorth.accounts.length > 0 && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Investments Card */}
+                {investmentAccounts.length > 0 && (
+                  <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-white/50 overflow-hidden">
+                    <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-white">
+                        <span className="text-xl">📈</span>
+                        <h3 className="font-bold">Investments</h3>
+                      </div>
+                      <span className="text-white font-bold text-lg">{formatCurrency(investmentTotal)}</span>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {investmentAccounts.map((account) => (
+                        <div
+                          key={account.account_id}
+                          className="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition-colors group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xl">{getAccountTypeIcon(account.account_type)}</span>
+                            <div>
+                              <p className="font-medium text-gray-900">{account.account_name}</p>
+                              <p className="text-xs text-gray-500">{getAccountTypeLabel(account.account_type)} · {formatDate(account.statement_date)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{formatCurrency(account.latest_value)}</span>
+                            <button
+                              onClick={(e) => confirmDeleteAccount(account.account_id, account.account_name, e)}
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Delete account"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Cash Card */}
+                {cashAccounts.length > 0 && (
+                  <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-white/50 overflow-hidden">
+                    <div className="bg-gradient-to-r from-amber-500 to-yellow-500 px-5 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-white">
+                        <span className="text-xl">💵</span>
+                        <h3 className="font-bold">Cash</h3>
+                      </div>
+                      <span className="text-white font-bold text-lg">{formatCurrency(cashTotal)}</span>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                      {cashAccounts.map((account) => (
+                        <div
+                          key={account.account_id}
+                          className="px-5 py-3 flex items-center justify-between hover:bg-gray-50/50 transition-colors group"
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="text-xl">{getAccountTypeIcon(account.account_type)}</span>
+                            <div>
+                              <p className="font-medium text-gray-900">{account.account_name}</p>
+                              <p className="text-xs text-gray-500">{getAccountTypeLabel(account.account_type)} · {formatDate(account.statement_date)}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-gray-900">{formatCurrency(account.latest_value)}</span>
+                            <button
+                              onClick={(e) => confirmDeleteAccount(account.account_id, account.account_name, e)}
+                              className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Delete account"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Net Worth Charts */}
         {!loading && netWorth && netWorth.history.length > 0 && (
@@ -777,7 +888,7 @@ export default function InvestmentsPage() {
           </div>
         )}
 
-        {/* Snapshots List - Grouped by Account */}
+        {/* Snapshots List - Grouped by Category then Account */}
         {!loading && snapshots.length > 0 && (() => {
           // Group snapshots by account
           const snapshotsByAccount = snapshots.reduce((acc, snapshot) => {
@@ -802,6 +913,14 @@ export default function InvestmentsPage() {
 
           const accountGroups = Object.values(snapshotsByAccount);
 
+          // Separate by category
+          const cashTypes = ['CHECKING', 'SAVINGS'];
+          const investmentGroups = accountGroups.filter(g => !cashTypes.includes(g.account_type));
+          const cashGroups = accountGroups.filter(g => cashTypes.includes(g.account_type));
+
+          const investmentStatements = investmentGroups.reduce((sum, g) => sum + g.snapshots.length, 0);
+          const cashStatements = cashGroups.reduce((sum, g) => sum + g.snapshots.length, 0);
+
           const toggleAccount = (accountId: string) => {
             setExpandedAccounts(prev => {
               const newSet = new Set(prev);
@@ -814,83 +933,113 @@ export default function InvestmentsPage() {
             });
           };
 
-          return (
-            <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 overflow-hidden">
-              <div className="px-6 py-4 bg-gradient-to-r from-gray-50/80 to-white/80 border-b border-gray-100">
-                <h2 className="text-lg font-bold text-gray-900">Statement History</h2>
-                <p className="text-sm text-gray-500 mt-1">{snapshots.length} statements across {accountGroups.length} accounts</p>
-              </div>
-              <div className="divide-y divide-gray-200">
-                {accountGroups.map((accountGroup) => {
-                  const isExpanded = expandedAccounts.has(accountGroup.account_id);
-                  const latestSnapshot = accountGroup.snapshots[0]; // Already sorted newest first
+          const renderAccountGroup = (accountGroup: typeof accountGroups[0], accentColor: string) => {
+            const isExpanded = expandedAccounts.has(accountGroup.account_id);
+            const latestSnapshot = accountGroup.snapshots[0];
+            const dotColor = accentColor === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500';
+            const hoverBg = accentColor === 'emerald' ? 'hover:bg-emerald-50/50' : 'hover:bg-amber-50/50';
 
-                  return (
-                    <div key={accountGroup.account_id} className="p-4">
-                      {/* Account Header - Clickable to expand/collapse */}
-                      <button
-                        onClick={() => toggleAccount(accountGroup.account_id)}
-                        className="w-full flex items-center justify-between hover:bg-gray-50/50 -m-2 p-2 rounded-lg transition-colors"
+            return (
+              <div key={accountGroup.account_id}>
+                <button
+                  onClick={() => toggleAccount(accountGroup.account_id)}
+                  className={`w-full flex items-center justify-between p-3 rounded-lg transition-colors ${hoverBg}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <svg
+                      className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    <span className="text-xl">{getAccountTypeIcon(accountGroup.account_type)}</span>
+                    <div className="text-left">
+                      <p className="font-medium text-gray-900">{accountGroup.account_name}</p>
+                      <p className="text-xs text-gray-500">
+                        {accountGroup.snapshots.length} {accountGroup.snapshots.length === 1 ? 'statement' : 'statements'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-gray-900">{formatCurrency(latestSnapshot.total_value)}</p>
+                    <p className="text-xs text-gray-500">{formatDate(latestSnapshot.statement_date)}</p>
+                  </div>
+                </button>
+
+                {isExpanded && (
+                  <div className="ml-10 mr-3 mb-2 space-y-1">
+                    {accountGroup.snapshots.map((snapshot) => (
+                      <div
+                        key={snapshot.id}
+                        className="flex items-center justify-between p-2.5 bg-gray-50/80 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
+                        onClick={() => viewSnapshotDetail(snapshot.id)}
                       >
                         <div className="flex items-center gap-3">
-                          {/* Expand/Collapse Arrow */}
-                          <svg
-                            className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                          <span className="text-2xl">{getAccountTypeIcon(accountGroup.account_type)}</span>
-                          <div className="text-left">
-                            <p className="font-semibold text-gray-900">{accountGroup.account_name}</p>
+                          <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`}></div>
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{formatDate(snapshot.statement_date)}</p>
                             <p className="text-xs text-gray-500">
-                              {getAccountTypeLabel(accountGroup.account_type)} • {accountGroup.snapshots.length} {accountGroup.snapshots.length === 1 ? 'statement' : 'statements'}
+                              {snapshot.position_count > 0 ? `${snapshot.position_count} positions` : 'Balance snapshot'}
                             </p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-lg font-bold text-gray-900">{formatCurrency(latestSnapshot.total_value)}</p>
-                          <p className="text-xs text-gray-500">Latest: {formatDate(latestSnapshot.statement_date)}</p>
+                          <p className="text-sm font-bold text-gray-900">{formatCurrency(snapshot.total_value)}</p>
+                          {snapshot.is_reconciled ? (
+                            <span className="text-xs text-emerald-600">Reconciled</span>
+                          ) : (
+                            <span className="text-xs text-amber-600">Review</span>
+                          )}
                         </div>
-                      </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          };
 
-                      {/* Statements for this account - Collapsible */}
-                      {isExpanded && (
-                        <div className="ml-7 mt-3 space-y-2">
-                          {accountGroup.snapshots.map((snapshot) => (
-                            <div
-                              key={snapshot.id}
-                              className="flex items-center justify-between p-3 bg-gray-50/80 rounded-lg hover:bg-gray-100/80 transition-colors cursor-pointer"
-                              onClick={() => viewSnapshotDetail(snapshot.id)}
-                            >
-                              <div className="flex items-center gap-3">
-                                <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                                <div>
-                                  <p className="text-sm font-medium text-gray-900">
-                                    {formatDate(snapshot.statement_date)}
-                                  </p>
-                                  <p className="text-xs text-gray-500">
-                                    {snapshot.position_count} positions
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className="text-sm font-bold text-gray-900">{formatCurrency(snapshot.total_value)}</p>
-                                {snapshot.is_reconciled ? (
-                                  <span className="text-xs text-emerald-600">Reconciled</span>
-                                ) : (
-                                  <span className="text-xs text-amber-600">Review</span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-gray-900">Statement History</h2>
+                <p className="text-sm text-gray-500">{snapshots.length} statements across {accountGroups.length} accounts</p>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Investment Statements */}
+                {investmentGroups.length > 0 && (
+                  <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-white/50 overflow-hidden">
+                    <div className="bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-white">
+                        <span className="text-xl">📈</span>
+                        <h3 className="font-bold">Investment Statements</h3>
+                      </div>
+                      <span className="text-white/80 text-sm">{investmentStatements} total</span>
                     </div>
-                  );
-                })}
+                    <div className="p-2 divide-y divide-gray-100">
+                      {investmentGroups.map(group => renderAccountGroup(group, 'emerald'))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Cash Statements */}
+                {cashGroups.length > 0 && (
+                  <div className="bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg border border-white/50 overflow-hidden">
+                    <div className="bg-gradient-to-r from-amber-500 to-yellow-500 px-5 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-white">
+                        <span className="text-xl">💵</span>
+                        <h3 className="font-bold">Bank Statements</h3>
+                      </div>
+                      <span className="text-white/80 text-sm">{cashStatements} total</span>
+                    </div>
+                    <div className="p-2 divide-y divide-gray-100">
+                      {cashGroups.map(group => renderAccountGroup(group, 'amber'))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
