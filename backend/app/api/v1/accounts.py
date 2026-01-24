@@ -11,6 +11,8 @@ from app.models.transaction import Transaction
 from app.models.import_record import ImportRecord
 from app.models.holdings_snapshot import HoldingsSnapshot
 from app.models.position import Position
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 from app.schemas.account import (
     AccountCreate,
     AccountUpdate,
@@ -61,18 +63,21 @@ def _get_account_stats(db: Session, account_id: str) -> dict:
 @router.post("/accounts", response_model=AccountResponse, status_code=status.HTTP_201_CREATED)
 def create_account(
     account_data: AccountCreate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create a new account.
 
     Args:
         account_data: Account creation data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Created account
     """
     account = Account(
+        user_id=current_user.id,
         name=account_data.name,
         institution=account_data.institution,
         account_type=account_data.account_type,
@@ -93,18 +98,20 @@ def create_account(
 @router.get("/accounts", response_model=AccountListResponse)
 def list_accounts(
     is_active: bool = None,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """List all accounts.
 
     Args:
         is_active: Filter by active status (optional)
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         List of accounts with transaction/snapshot/position counts
     """
-    query = db.query(Account)
+    query = db.query(Account).filter(Account.user_id == current_user.id)
 
     if is_active is not None:
         query = query.filter(Account.is_active == is_active)
@@ -176,18 +183,23 @@ def list_accounts(
 @router.get("/accounts/{account_id}", response_model=AccountResponse)
 def get_account(
     account_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get account by ID.
 
     Args:
         account_id: Account ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Account details with all stats
     """
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not account:
         raise HTTPException(
@@ -223,6 +235,7 @@ def get_account_category(account_type: str) -> str:
 def update_account(
     account_id: str,
     account_data: AccountUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update an account.
@@ -230,12 +243,16 @@ def update_account(
     Args:
         account_id: Account ID
         account_data: Account update data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Updated account
     """
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not account:
         raise HTTPException(
@@ -281,6 +298,7 @@ def update_account(
 def delete_account(
     account_id: str,
     permanent: bool = Query(False, description="If true, permanently delete account and all data"),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete an account.
@@ -288,9 +306,13 @@ def delete_account(
     Args:
         account_id: Account ID
         permanent: If true, permanently delete. If false, soft delete (deactivate).
+        current_user: Authenticated user
         db: Database session
     """
-    account = db.query(Account).filter(Account.id == account_id).first()
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not account:
         raise HTTPException(

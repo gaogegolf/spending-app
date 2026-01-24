@@ -340,3 +340,176 @@ class StatsService:
             'current_year': now.year,
             'current_month_num': now.month,
         }
+
+    def get_yoy_comparison(self, year1: int, year2: int,
+                           user_id: str = "default_user",
+                           account_id: str = None) -> Dict[str, Any]:
+        """Compare spending between two years (year-over-year).
+
+        Args:
+            year1: First year (typically earlier)
+            year2: Second year (typically later/current)
+            user_id: User ID
+            account_id: Optional account ID
+
+        Returns:
+            Dictionary with YoY comparison data
+        """
+        summary1 = self.get_yearly_summary(year1, user_id, account_id)
+        summary2 = self.get_yearly_summary(year2, user_id, account_id)
+
+        spend_change = summary2['total_spend'] - summary1['total_spend']
+        spend_change_pct = (spend_change / summary1['total_spend'] * 100) if summary1['total_spend'] > 0 else 0
+
+        income_change = summary2['total_income'] - summary1['total_income']
+        income_change_pct = (income_change / summary1['total_income'] * 100) if summary1['total_income'] > 0 else 0
+
+        # Monthly comparison
+        monthly_comparison = []
+        for i in range(12):
+            m1 = summary1['monthly_data'][i]
+            m2 = summary2['monthly_data'][i]
+            change = m2['total_spend'] - m1['total_spend']
+            change_pct = (change / m1['total_spend'] * 100) if m1['total_spend'] > 0 else 0
+
+            monthly_comparison.append({
+                'month': i + 1,
+                'month_name': m1['month_name'],
+                'year1_spend': m1['total_spend'],
+                'year2_spend': m2['total_spend'],
+                'change': change,
+                'change_pct': change_pct,
+            })
+
+        return {
+            'year1': year1,
+            'year2': year2,
+            'year1_total_spend': summary1['total_spend'],
+            'year2_total_spend': summary2['total_spend'],
+            'spend_change': spend_change,
+            'spend_change_pct': spend_change_pct,
+            'year1_total_income': summary1['total_income'],
+            'year2_total_income': summary2['total_income'],
+            'income_change': income_change,
+            'income_change_pct': income_change_pct,
+            'monthly_comparison': monthly_comparison,
+        }
+
+    def get_yoy_monthly_comparison(self, month: int, year1: int, year2: int,
+                                   user_id: str = "default_user",
+                                   account_id: str = None) -> Dict[str, Any]:
+        """Compare the same month across two years.
+
+        Args:
+            month: Month to compare (1-12)
+            year1: First year
+            year2: Second year
+            user_id: User ID
+            account_id: Optional account ID
+
+        Returns:
+            Dictionary with monthly YoY comparison
+        """
+        summary1 = self.get_monthly_summary(year1, month, user_id, account_id)
+        summary2 = self.get_monthly_summary(year2, month, user_id, account_id)
+
+        spend_change = summary2['total_spend'] - summary1['total_spend']
+        spend_change_pct = (spend_change / summary1['total_spend'] * 100) if summary1['total_spend'] > 0 else 0
+
+        # Category comparison
+        cat1_dict = {c['category']: c for c in summary1['category_breakdown']}
+        cat2_dict = {c['category']: c for c in summary2['category_breakdown']}
+
+        all_categories = set(cat1_dict.keys()) | set(cat2_dict.keys())
+
+        category_comparison = []
+        for cat in sorted(all_categories):
+            amt1 = cat1_dict.get(cat, {}).get('amount', 0)
+            amt2 = cat2_dict.get(cat, {}).get('amount', 0)
+            change = amt2 - amt1
+            change_pct = (change / amt1 * 100) if amt1 > 0 else 0
+
+            category_comparison.append({
+                'category': cat,
+                'year1_amount': amt1,
+                'year2_amount': amt2,
+                'change': change,
+                'change_pct': change_pct,
+            })
+
+        category_comparison.sort(key=lambda x: abs(x['change']), reverse=True)
+
+        return {
+            'month': month,
+            'month_name': date(year1, month, 1).strftime('%B'),
+            'year1': year1,
+            'year2': year2,
+            'year1_summary': summary1,
+            'year2_summary': summary2,
+            'spend_change': spend_change,
+            'spend_change_pct': spend_change_pct,
+            'category_comparison': category_comparison,
+        }
+
+    def get_spending_velocity(self, user_id: str = "default_user",
+                              months: int = 12,
+                              account_id: str = None) -> Dict[str, Any]:
+        """Calculate spending velocity (trend) over recent months.
+
+        Args:
+            user_id: User ID
+            months: Number of months to analyze
+            account_id: Optional account ID
+
+        Returns:
+            Dictionary with spending velocity data
+        """
+        now = datetime.now()
+        monthly_data = []
+
+        for i in range(months - 1, -1, -1):
+            # Calculate the month (going backwards from current)
+            year = now.year
+            month = now.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+
+            summary = self.get_monthly_summary(year, month, user_id, account_id)
+            monthly_data.append({
+                'year': year,
+                'month': month,
+                'month_name': date(year, month, 1).strftime('%b %Y'),
+                'total_spend': summary['total_spend'],
+                'total_income': summary['total_income'],
+                'net': summary['net'],
+            })
+
+        # Calculate trend (simple linear regression)
+        if len(monthly_data) >= 2:
+            spends = [m['total_spend'] for m in monthly_data]
+            n = len(spends)
+            x_mean = (n - 1) / 2
+            y_mean = sum(spends) / n
+
+            numerator = sum((i - x_mean) * (spends[i] - y_mean) for i in range(n))
+            denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+            slope = numerator / denominator if denominator != 0 else 0
+            trend_direction = 'increasing' if slope > 10 else ('decreasing' if slope < -10 else 'stable')
+        else:
+            slope = 0
+            trend_direction = 'insufficient_data'
+
+        avg_spend = sum(m['total_spend'] for m in monthly_data) / len(monthly_data) if monthly_data else 0
+        avg_income = sum(m['total_income'] for m in monthly_data) / len(monthly_data) if monthly_data else 0
+
+        return {
+            'months_analyzed': months,
+            'monthly_data': monthly_data,
+            'avg_monthly_spend': avg_spend,
+            'avg_monthly_income': avg_income,
+            'avg_monthly_net': avg_income - avg_spend,
+            'trend_slope': slope,
+            'trend_direction': trend_direction,
+        }

@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
 
+    # JWT Authentication
+    JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     # File Upload
     MAX_FILE_SIZE_MB: int = 10
     UPLOAD_DIR: str = "./uploads"

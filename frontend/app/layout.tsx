@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Navigation from "./components/Navigation";
+import { AuthProvider } from "@/lib/auth-context";
+import MainLayout from "./components/MainLayout";
 
 export const metadata: Metadata = {
   title: "Personal Finance Manager",
@@ -15,10 +16,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased">
-        <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-          <Navigation />
-          <main className="py-8">{children}</main>
-        </div>
+        <AuthProvider>
+          <MainLayout>{children}</MainLayout>
+        </AuthProvider>
       </body>
     </html>
   );

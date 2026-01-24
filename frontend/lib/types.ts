@@ -282,3 +282,134 @@ export interface AssetClassBreakdown {
     total: number;
   }[];
 }
+
+// Recurring transaction types
+export type RecurringFrequency = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'YEARLY';
+
+export interface RecurringTransaction {
+  id: string;
+  user_id: string;
+  merchant_normalized: string;
+  expected_amount: string;
+  amount_tolerance: string;
+  frequency: RecurringFrequency;
+  next_expected_date: string | null;
+  last_transaction_id: string | null;
+  is_active: boolean;
+  is_auto_detected: boolean;
+  confidence: string | null;
+  category: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RecurringTransactionListResponse {
+  recurring_transactions: RecurringTransaction[];
+  total: number;
+}
+
+export interface RecurringCandidate {
+  merchant_normalized: string;
+  expected_amount: string;
+  frequency: RecurringFrequency;
+  confidence: string;
+  transaction_count: number;
+  avg_interval_days: number;
+  amount_variance: string;
+  first_date: string;
+  last_date: string;
+  sample_transaction_ids: string[];
+}
+
+export interface RecurringCandidatesResponse {
+  candidates: RecurringCandidate[];
+  total: number;
+}
+
+export interface UpcomingRecurring {
+  id: string;
+  merchant_normalized: string;
+  expected_amount: string;
+  next_expected_date: string;
+  days_until: number;
+  frequency: RecurringFrequency;
+  category: string | null;
+}
+
+export interface UpcomingRecurringResponse {
+  upcoming: UpcomingRecurring[];
+  total: number;
+  total_expected_amount: string;
+}
+
+export interface RecurringSummary {
+  total_active: number;
+  total_monthly_cost: string;
+  total_yearly_cost: string;
+  by_category: { category: string; monthly_cost: number }[];
+  by_frequency: { frequency: string; count: number }[];
+}
+
+// Reports types
+export interface YoYComparisonMonth {
+  month: number;
+  month_name: string;
+  year1_spend: number;
+  year2_spend: number;
+  change: number;
+  change_pct: number;
+}
+
+export interface YoYComparisonResponse {
+  year1: number;
+  year2: number;
+  year1_total_spend: number;
+  year2_total_spend: number;
+  spend_change: number;
+  spend_change_pct: number;
+  year1_total_income: number;
+  year2_total_income: number;
+  income_change: number;
+  income_change_pct: number;
+  monthly_comparison: YoYComparisonMonth[];
+}
+
+export interface CategoryYoYComparison {
+  category: string;
+  year1_amount: number;
+  year2_amount: number;
+  change: number;
+  change_pct: number;
+}
+
+export interface YoYMonthlyComparisonResponse {
+  month: number;
+  month_name: string;
+  year1: number;
+  year2: number;
+  year1_summary: MonthlySummary;
+  year2_summary: MonthlySummary;
+  spend_change: number;
+  spend_change_pct: number;
+  category_comparison: CategoryYoYComparison[];
+}
+
+export interface VelocityMonth {
+  year: number;
+  month: number;
+  month_name: string;
+  total_spend: number;
+  total_income: number;
+  net: number;
+}
+
+export interface SpendingVelocityResponse {
+  months_analyzed: number;
+  monthly_data: VelocityMonth[];
+  avg_monthly_spend: number;
+  avg_monthly_income: number;
+  avg_monthly_net: number;
+  trend_slope: number;
+  trend_direction: 'increasing' | 'decreasing' | 'stable' | 'insufficient_data';
+}
