@@ -1,6 +1,7 @@
 # 个人财务管理器
 
-[English](README.md)
+[![English](https://img.shields.io/badge/lang-English-blue)](README.md)
+[![中文](https://img.shields.io/badge/lang-中文-red)](README.zh-CN.md)
 
 一个全栈个人财务应用，支持导入银行/信用卡账单，使用AI自动分类交易，并追踪支出和净资产。
 

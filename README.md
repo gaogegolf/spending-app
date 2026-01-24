@@ -1,6 +1,7 @@
 # Personal Finance Manager
 
-[中文版](README.zh-CN.md)
+[![English](https://img.shields.io/badge/lang-English-blue)](README.md)
+[![中文](https://img.shields.io/badge/lang-中文-red)](README.zh-CN.md)
 
 A full-stack personal finance app that imports bank/credit card statements, classifies transactions with AI, and tracks spending and net worth.
 
