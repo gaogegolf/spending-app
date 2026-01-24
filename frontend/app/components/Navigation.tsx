@@ -10,7 +10,6 @@ const navLinks = [
   { href: '/accounts', label: 'Accounts' },
   { href: '/imports', label: 'Import' },
   { href: '/transactions', label: 'Transactions' },
-  { href: '/subscriptions', label: 'Subscriptions' },
   { href: '/reports', label: 'Reports' },
   { href: '/merchant-categories', label: 'Merchants' },
   { href: '/rules', label: 'Rules' },

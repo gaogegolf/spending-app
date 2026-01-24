@@ -1,7 +1,7 @@
 """Add users table for authentication.
 
 Revision ID: 7d8e9f0a1b2c
-Revises: 6c7d8e9f1a2b
+Revises: 5b6c7d8e9f0a
 Create Date: 2026-01-23
 
 """
@@ -12,7 +12,7 @@ import uuid
 
 # revision identifiers, used by Alembic.
 revision = '7d8e9f0a1b2c'
-down_revision = '6c7d8e9f1a2b'
+down_revision = '5b6c7d8e9f0a'
 branch_labels = None
 depends_on = None
 
