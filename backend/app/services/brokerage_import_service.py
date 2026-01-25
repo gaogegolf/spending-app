@@ -35,9 +35,15 @@ logger = logging.getLogger(__name__)
 class BrokerageImportService:
     """Service to orchestrate brokerage statement import."""
 
-    def __init__(self, db: Session):
-        """Initialize brokerage import service."""
+    def __init__(self, db: Session, user_id: str = None):
+        """Initialize brokerage import service.
+
+        Args:
+            db: Database session
+            user_id: User ID for user-specific operations
+        """
         self.db = db
+        self.user_id = user_id
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
 
@@ -579,6 +585,10 @@ class BrokerageImportService:
         """
         query = self.db.query(HoldingsSnapshot).join(Account)
 
+        # Filter by user
+        if self.user_id:
+            query = query.filter(Account.user_id == self.user_id)
+
         if account_id:
             query = query.filter(HoldingsSnapshot.account_id == account_id)
         if start_date:
@@ -662,17 +672,27 @@ class BrokerageImportService:
         Returns:
             Current net worth and history
         """
+        # Build base query filtering by user
+        base_query = self.db.query(HoldingsSnapshot).join(Account)
+        if self.user_id:
+            base_query = base_query.filter(Account.user_id == self.user_id)
+
         # Get latest snapshot for each account (for current total)
         subquery = self.db.query(
             HoldingsSnapshot.account_id,
             func.max(HoldingsSnapshot.statement_date).label("max_date")
-        ).group_by(HoldingsSnapshot.account_id).subquery()
+        ).join(Account)
+        if self.user_id:
+            subquery = subquery.filter(Account.user_id == self.user_id)
+        subquery = subquery.group_by(HoldingsSnapshot.account_id).subquery()
 
-        query = self.db.query(HoldingsSnapshot).join(
+        query = self.db.query(HoldingsSnapshot).join(Account).join(
             subquery,
             (HoldingsSnapshot.account_id == subquery.c.account_id) &
             (HoldingsSnapshot.statement_date == subquery.c.max_date)
         )
+        if self.user_id:
+            query = query.filter(Account.user_id == self.user_id)
 
         if account_ids:
             query = query.filter(HoldingsSnapshot.account_id.in_(account_ids))
@@ -682,7 +702,9 @@ class BrokerageImportService:
         current_total = sum(float(s.total_value) for s in latest_snapshots)
 
         # Get all snapshots for history calculation
-        all_snapshots_query = self.db.query(HoldingsSnapshot)
+        all_snapshots_query = self.db.query(HoldingsSnapshot).join(Account)
+        if self.user_id:
+            all_snapshots_query = all_snapshots_query.filter(Account.user_id == self.user_id)
         if account_ids:
             all_snapshots_query = all_snapshots_query.filter(
                 HoldingsSnapshot.account_id.in_(account_ids)
@@ -751,6 +773,10 @@ class BrokerageImportService:
 
         # Get all snapshots with account info
         query = self.db.query(HoldingsSnapshot).join(Account)
+
+        # Filter by user
+        if self.user_id:
+            query = query.filter(Account.user_id == self.user_id)
 
         if account_ids:
             query = query.filter(HoldingsSnapshot.account_id.in_(account_ids))
@@ -828,13 +854,18 @@ class BrokerageImportService:
         subquery = self.db.query(
             HoldingsSnapshot.account_id,
             func.max(HoldingsSnapshot.statement_date).label("max_date")
-        ).group_by(HoldingsSnapshot.account_id).subquery()
+        ).join(Account)
+        if self.user_id:
+            subquery = subquery.filter(Account.user_id == self.user_id)
+        subquery = subquery.group_by(HoldingsSnapshot.account_id).subquery()
 
-        query = self.db.query(HoldingsSnapshot).join(
+        query = self.db.query(HoldingsSnapshot).join(Account).join(
             subquery,
             (HoldingsSnapshot.account_id == subquery.c.account_id) &
             (HoldingsSnapshot.statement_date == subquery.c.max_date)
         )
+        if self.user_id:
+            query = query.filter(Account.user_id == self.user_id)
 
         if account_ids:
             query = query.filter(HoldingsSnapshot.account_id.in_(account_ids))
@@ -875,7 +906,9 @@ class BrokerageImportService:
         current_total = sum(current_breakdown.values())
 
         # Get all snapshots for history calculation
-        all_snapshots_query = self.db.query(HoldingsSnapshot)
+        all_snapshots_query = self.db.query(HoldingsSnapshot).join(Account)
+        if self.user_id:
+            all_snapshots_query = all_snapshots_query.filter(Account.user_id == self.user_id)
         if account_ids:
             all_snapshots_query = all_snapshots_query.filter(
                 HoldingsSnapshot.account_id.in_(account_ids)
@@ -998,7 +1031,7 @@ class BrokerageImportService:
     ) -> Optional[Account]:
         """Find existing account matching the parse result.
 
-        Matches by account_number_last4 and institution (provider).
+        Matches by account_number_last4 and institution (provider), filtered by user_id.
         This allows multiple imports to the same account to be linked together.
         """
         provider = parse_result.get("provider", "").title()
@@ -1008,12 +1041,15 @@ class BrokerageImportService:
         if not last4:
             return None
 
-        # Find account with matching last4 and institution
-        account = self.db.query(Account).filter(
+        # Find account with matching last4, institution, and user_id
+        query = self.db.query(Account).filter(
             Account.account_number_last4 == last4,
             Account.institution == provider,
             Account.is_active == True
-        ).first()
+        )
+        if self.user_id:
+            query = query.filter(Account.user_id == self.user_id)
+        account = query.first()
 
         return account
 
@@ -1054,6 +1090,7 @@ class BrokerageImportService:
             institution=provider,
             account_type=account_type,
             account_number_last4=account_identifier[-4:] if len(account_identifier) >= 4 else None,
+            user_id=self.user_id,
         )
 
         self.db.add(account)

@@ -14,12 +14,14 @@ interface User {
 interface AuthContextType {
   user: User | null;
   accessToken: string | null;
+  refreshTokenValue: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, username: string, password: string) => Promise<void>;
   logout: () => void;
   refreshToken: () => Promise<boolean>;
+  updateUser: (user: User) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -165,15 +167,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return false;
   }
 
+  function updateUser(updatedUser: User) {
+    setUser(updatedUser);
+  }
+
   const value = {
     user,
     accessToken,
+    refreshTokenValue,
     isLoading,
     isAuthenticated: !!user,
     login,
     register,
     logout,
     refreshToken,
+    updateUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

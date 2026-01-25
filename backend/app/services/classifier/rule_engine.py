@@ -22,7 +22,7 @@ class RuleEngine:
         self.db = db
         self._rules_cache: Optional[List[Rule]] = None
 
-    def load_active_rules(self, user_id: str = "default_user") -> List[Rule]:
+    def load_active_rules(self, user_id: str) -> List[Rule]:
         """Load active rules from database, sorted by priority.
 
         Args:
@@ -38,7 +38,7 @@ class RuleEngine:
 
         return self._rules_cache
 
-    def match_transaction(self, transaction: Transaction) -> Optional[Rule]:
+    def match_transaction(self, transaction: Transaction, user_id: Optional[str] = None) -> Optional[Rule]:
         """Find the first matching rule for a transaction.
 
         Rules are applied in priority order (lower priority number = higher priority).
@@ -46,14 +46,21 @@ class RuleEngine:
 
         Args:
             transaction: Transaction to match
+            user_id: User ID for loading rules (optional, will try to get from transaction.account)
 
         Returns:
             Matching Rule or None
         """
         if not self._rules_cache:
-            self.load_active_rules(transaction.account.user_id if hasattr(transaction, 'account') else "default_user")
+            # Get user_id from account if not provided
+            if not user_id and hasattr(transaction, 'account') and transaction.account:
+                user_id = transaction.account.user_id
+            if user_id:
+                self.load_active_rules(user_id)
+            else:
+                return None  # No user_id available, can't load rules
 
-        for rule in self._rules_cache:
+        for rule in self._rules_cache or []:
             if self._rule_matches(rule, transaction):
                 # Update rule match statistics
                 rule.match_count += 1
@@ -242,19 +249,20 @@ class RuleEngine:
 
         return transaction
 
-    def match_transaction_data(self, txn_data: dict) -> Optional[Rule]:
+    def match_transaction_data(self, txn_data: dict, user_id: Optional[str] = None) -> Optional[Rule]:
         """Find the first matching rule for transaction data (dict, before DB insert).
 
         Args:
             txn_data: Transaction data dictionary
+            user_id: User ID for loading rules
 
         Returns:
             Matching Rule or None
         """
-        if not self._rules_cache:
-            self.load_active_rules("default_user")
+        if not self._rules_cache and user_id:
+            self.load_active_rules(user_id)
 
-        for rule in self._rules_cache:
+        for rule in self._rules_cache or []:
             if self._rule_matches_data(rule, txn_data):
                 # Update rule match statistics
                 rule.match_count += 1

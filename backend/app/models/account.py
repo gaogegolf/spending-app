@@ -32,7 +32,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), nullable=False, default="default_user")  # Simplified for MVP
+    user_id = Column(String(36), nullable=False)  # Required - no default to prevent data leakage
     name = Column(String(255), nullable=False)
     institution = Column(String(255))
     account_type = Column(Enum(AccountType), nullable=False)

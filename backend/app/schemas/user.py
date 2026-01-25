@@ -65,3 +65,37 @@ class MessageResponse(BaseModel):
     """Generic message response."""
 
     message: str
+
+
+class UserUpdate(BaseModel):
+    """Schema for updating user profile."""
+
+    username: Optional[str] = Field(None, min_length=3, max_length=100, description="New username")
+    email: Optional[EmailStr] = Field(None, description="New email address")
+
+
+class SessionResponse(BaseModel):
+    """Schema for session information."""
+
+    id: str
+    device_info: Optional[str]
+    ip_address: Optional[str]
+    created_at: datetime
+    last_activity: datetime
+    is_current: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class SessionListResponse(BaseModel):
+    """Schema for list of sessions."""
+
+    sessions: list[SessionResponse]
+    total: int
+
+
+class DeleteAccountRequest(BaseModel):
+    """Schema for account deletion request."""
+
+    password: str = Field(..., description="Current password for confirmation")

@@ -8,6 +8,9 @@ from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.merchant_category import MerchantCategory
 from app.models.transaction import Transaction
+from app.models.account import Account
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 from app.schemas.merchant_category import (
     MerchantCategoryCreate,
     MerchantCategoryUpdate,
@@ -25,6 +28,7 @@ def list_merchant_categories(
     category: Optional[str] = Query(None, description="Filter by category"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=1000),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """List merchant category mappings with filters and pagination.
@@ -35,12 +39,13 @@ def list_merchant_categories(
         category: Filter by category name
         page: Page number (1-indexed)
         page_size: Items per page
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Paginated list of merchant categories
     """
-    query = db.query(MerchantCategory).filter(MerchantCategory.user_id == 'default_user')
+    query = db.query(MerchantCategory).filter(MerchantCategory.user_id == current_user.id)
 
     # Apply filters
     if merchant_search:
@@ -73,15 +78,19 @@ def list_merchant_categories(
 
 @router.get("/merchant-categories/categories", response_model=List[str])
 def list_unique_categories(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get list of unique categories used in merchant mappings.
+
+    Args:
+        current_user: Authenticated user
 
     Returns:
         List of unique category names
     """
     results = db.query(MerchantCategory.category).filter(
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).distinct().all()
 
     return sorted([r[0] for r in results])
@@ -90,12 +99,14 @@ def list_unique_categories(
 @router.get("/merchant-categories/{mapping_id}", response_model=MerchantCategoryResponse)
 def get_merchant_category(
     mapping_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get merchant category mapping by ID.
 
     Args:
         mapping_id: Merchant category mapping ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -103,7 +114,7 @@ def get_merchant_category(
     """
     mapping = db.query(MerchantCategory).filter(
         MerchantCategory.id == mapping_id,
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).first()
 
     if not mapping:
@@ -118,6 +129,7 @@ def get_merchant_category(
 @router.post("/merchant-categories", response_model=MerchantCategoryResponse, status_code=status.HTTP_201_CREATED)
 def create_merchant_category(
     data: MerchantCategoryCreate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create a new merchant category mapping.
@@ -126,6 +138,7 @@ def create_merchant_category(
 
     Args:
         data: Merchant category creation data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -133,7 +146,7 @@ def create_merchant_category(
     """
     # Check if mapping already exists
     existing = db.query(MerchantCategory).filter(
-        MerchantCategory.user_id == 'default_user',
+        MerchantCategory.user_id == current_user.id,
         MerchantCategory.merchant_normalized == data.merchant_normalized
     ).first()
 
@@ -148,7 +161,7 @@ def create_merchant_category(
 
     # Create new mapping
     mapping = MerchantCategory(
-        user_id='default_user',
+        user_id=current_user.id,
         merchant_normalized=data.merchant_normalized,
         category=data.category,
         confidence=data.confidence,
@@ -167,6 +180,7 @@ def create_merchant_category(
 def update_merchant_category(
     mapping_id: str,
     data: MerchantCategoryUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update a merchant category mapping.
@@ -174,6 +188,7 @@ def update_merchant_category(
     Args:
         mapping_id: Merchant category mapping ID
         data: Update data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -181,7 +196,7 @@ def update_merchant_category(
     """
     mapping = db.query(MerchantCategory).filter(
         MerchantCategory.id == mapping_id,
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).first()
 
     if not mapping:
@@ -206,17 +221,19 @@ def update_merchant_category(
 @router.delete("/merchant-categories/{mapping_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_merchant_category(
     mapping_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a merchant category mapping.
 
     Args:
         mapping_id: Merchant category mapping ID
+        current_user: Authenticated user
         db: Database session
     """
     mapping = db.query(MerchantCategory).filter(
         MerchantCategory.id == mapping_id,
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).first()
 
     if not mapping:
@@ -232,12 +249,14 @@ def delete_merchant_category(
 @router.post("/merchant-categories/bulk-delete", response_model=dict)
 def bulk_delete_merchant_categories(
     mapping_ids: List[str],
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete multiple merchant category mappings.
 
     Args:
         mapping_ids: List of mapping IDs to delete
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -245,7 +264,7 @@ def bulk_delete_merchant_categories(
     """
     deleted_count = db.query(MerchantCategory).filter(
         MerchantCategory.id.in_(mapping_ids),
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).delete(synchronize_session=False)
 
     db.commit()
@@ -258,6 +277,7 @@ def bulk_delete_merchant_categories(
 
 @router.post("/merchant-categories/refresh-counts", response_model=dict)
 def refresh_merchant_counts(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Refresh times_applied counts for all merchant categories.
@@ -265,21 +285,23 @@ def refresh_merchant_counts(
     Recalculates based on actual transaction counts per merchant.
 
     Args:
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Summary of refreshed counts
     """
-    # Get all merchant categories
+    # Get all merchant categories for this user
     merchant_categories = db.query(MerchantCategory).filter(
-        MerchantCategory.user_id == 'default_user'
+        MerchantCategory.user_id == current_user.id
     ).all()
 
     updated_mappings = []
     for mapping in merchant_categories:
-        # Count transactions with this merchant
-        actual_count = db.query(Transaction).filter(
-            Transaction.merchant_normalized == mapping.merchant_normalized
+        # Count only user's transactions with this merchant
+        actual_count = db.query(Transaction).join(Account).filter(
+            Transaction.merchant_normalized == mapping.merchant_normalized,
+            Account.user_id == current_user.id
         ).count()
 
         # Update if different

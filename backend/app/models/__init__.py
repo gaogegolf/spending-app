@@ -7,6 +7,7 @@ from app.models.rule import Rule, RuleType
 from app.models.holdings_snapshot import HoldingsSnapshot
 from app.models.position import Position, PositionType, AssetClass
 from app.models.fx_rate import FxRate
+from app.models.session import Session
 
 __all__ = [
     "Account",
@@ -24,4 +25,5 @@ __all__ = [
     "PositionType",
     "AssetClass",
     "FxRate",
+    "Session",
 ]

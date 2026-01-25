@@ -7,6 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.brokerage_import_service import BrokerageImportService
+from app.models.account import Account
+from app.models.import_record import ImportRecord
+from app.models.holdings_snapshot import HoldingsSnapshot
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -15,6 +20,7 @@ router = APIRouter()
 async def upload_brokerage_statement(
     file: UploadFile = File(...),
     account_id: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Upload a brokerage statement PDF.
@@ -24,12 +30,25 @@ async def upload_brokerage_statement(
     Args:
         file: PDF statement file
         account_id: Optional account ID if known
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Upload status with detected provider
     """
-    service = BrokerageImportService(db)
+    # Verify account belongs to user if provided
+    if account_id:
+        account = db.query(Account).filter(
+            Account.id == account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found"
+            )
+
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         result = await service.upload(file, account_id)
@@ -50,18 +69,31 @@ async def upload_brokerage_statement(
 @router.post("/brokerage/{import_id}/parse")
 async def parse_brokerage_statement(
     import_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Parse uploaded brokerage statement and return preview.
 
     Args:
         import_id: Import record ID from upload
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Parsed holdings preview with reconciliation status
     """
-    service = BrokerageImportService(db)
+    # Verify import belongs to user via Account join
+    import_record = db.query(ImportRecord).join(Account).filter(
+        ImportRecord.id == import_id,
+        Account.user_id == current_user.id
+    ).first()
+    if not import_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         result = await service.parse(import_id)
@@ -90,6 +122,7 @@ async def commit_brokerage_import(
     account_id: Optional[str] = Form(None),
     create_account: bool = Form(True),
     account_name: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Commit parsed holdings to database.
@@ -101,12 +134,36 @@ async def commit_brokerage_import(
         account_id: Optional existing account ID
         create_account: If True, create new account if needed
         account_name: Name for new account
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Commit result with snapshot ID
     """
-    service = BrokerageImportService(db)
+    # Verify import belongs to user via Account join
+    import_record = db.query(ImportRecord).join(Account).filter(
+        ImportRecord.id == import_id,
+        Account.user_id == current_user.id
+    ).first()
+    if not import_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    # Verify account_id belongs to user if provided
+    if account_id:
+        account = db.query(Account).filter(
+            Account.id == account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found"
+            )
+
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         result = await service.commit(
@@ -134,6 +191,7 @@ async def list_snapshots(
     account_id: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """List holdings snapshots with optional filters.
@@ -142,12 +200,13 @@ async def list_snapshots(
         account_id: Filter by account
         start_date: Filter by start date
         end_date: Filter by end date
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         List of snapshot summaries
     """
-    service = BrokerageImportService(db)
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         snapshots = service.get_snapshots(
@@ -167,18 +226,31 @@ async def list_snapshots(
 @router.get("/brokerage/snapshots/{snapshot_id}")
 async def get_snapshot(
     snapshot_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get snapshot with positions.
 
     Args:
         snapshot_id: Snapshot ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Snapshot with full position details
     """
-    service = BrokerageImportService(db)
+    # Verify snapshot belongs to user via Account join
+    snapshot = db.query(HoldingsSnapshot).join(Account).filter(
+        HoldingsSnapshot.id == snapshot_id,
+        Account.user_id == current_user.id
+    ).first()
+    if not snapshot:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Snapshot {snapshot_id} not found"
+        )
+
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         result = service.get_snapshot_detail(snapshot_id)
@@ -199,18 +271,23 @@ async def get_snapshot(
 @router.delete("/brokerage/snapshots/{snapshot_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_snapshot(
     snapshot_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a holdings snapshot and its positions.
 
     Args:
         snapshot_id: Snapshot ID to delete
+        current_user: Authenticated user
         db: Database session
     """
-    from app.models.holdings_snapshot import HoldingsSnapshot
     from app.models.position import Position
 
-    snapshot = db.query(HoldingsSnapshot).filter(HoldingsSnapshot.id == snapshot_id).first()
+    # Verify snapshot belongs to user via Account join
+    snapshot = db.query(HoldingsSnapshot).join(Account).filter(
+        HoldingsSnapshot.id == snapshot_id,
+        Account.user_id == current_user.id
+    ).first()
     if not snapshot:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -227,19 +304,23 @@ async def delete_snapshot(
 @router.delete("/brokerage/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_brokerage_account(
     account_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a brokerage account and all its snapshots/positions.
 
     Args:
         account_id: Account ID to delete
+        current_user: Authenticated user
         db: Database session
     """
-    from app.models.account import Account
-    from app.models.holdings_snapshot import HoldingsSnapshot
     from app.models.position import Position
 
-    account = db.query(Account).filter(Account.id == account_id).first()
+    # Verify account belongs to user
+    account = db.query(Account).filter(
+        Account.id == account_id,
+        Account.user_id == current_user.id
+    ).first()
     if not account:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -265,6 +346,7 @@ async def delete_brokerage_account(
 @router.get("/brokerage/net-worth")
 async def get_net_worth(
     account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get net worth across brokerage accounts.
@@ -273,12 +355,13 @@ async def get_net_worth(
 
     Args:
         account_ids: Optional comma-separated list of account IDs
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Net worth summary with history
     """
-    service = BrokerageImportService(db)
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         account_id_list = account_ids.split(",") if account_ids else None
@@ -295,6 +378,7 @@ async def get_net_worth(
 @router.get("/brokerage/net-worth/by-account")
 async def get_net_worth_by_account(
     account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get net worth history broken down by account.
@@ -303,12 +387,13 @@ async def get_net_worth_by_account(
 
     Args:
         account_ids: Optional comma-separated list of account IDs
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         History with per-account breakdown
     """
-    service = BrokerageImportService(db)
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         account_id_list = account_ids.split(",") if account_ids else None
@@ -325,6 +410,7 @@ async def get_net_worth_by_account(
 @router.get("/brokerage/net-worth/by-asset-class")
 async def get_asset_class_breakdown(
     account_ids: Optional[str] = Query(None, description="Comma-separated account IDs"),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """Get asset class breakdown of holdings.
@@ -333,12 +419,13 @@ async def get_asset_class_breakdown(
 
     Args:
         account_ids: Optional comma-separated list of account IDs
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Current and historical breakdown by asset class
     """
-    service = BrokerageImportService(db)
+    service = BrokerageImportService(db, user_id=current_user.id)
 
     try:
         account_id_list = account_ids.split(",") if account_ids else None

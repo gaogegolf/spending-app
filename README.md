@@ -35,6 +35,14 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 - **Review Queue**: Flag items needing attention
 - **Bulk Operations**: Manage multiple transactions
 
+### Authentication & Account Management
+- **User Registration**: With password strength indicator
+- **Session Management**: View and revoke active login sessions
+- **Profile Settings**: Update email and username
+- **Change Password**: With real-time strength validation
+- **Delete Account**: Permanently remove account and all data
+- **Multi-Device**: Track logins across devices
+
 ## Business Logic
 
 | Type | is_spend | is_income |
@@ -78,6 +86,11 @@ Frontend: http://localhost:3001
 
 | Endpoint | Description |
 |----------|-------------|
+| `POST /api/v1/auth/register` | Register new user |
+| `POST /api/v1/auth/login` | Login and get tokens |
+| `GET /api/v1/auth/sessions` | List active sessions |
+| `PATCH /api/v1/auth/profile` | Update profile |
+| `DELETE /api/v1/auth/account` | Delete account |
 | `POST /api/v1/imports/upload` | Upload statement file |
 | `GET /api/v1/transactions` | List transactions (with filters) |
 | `GET /api/v1/stats/monthly` | Monthly summary |

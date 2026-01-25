@@ -27,7 +27,7 @@ class ExportService:
 
     def export_to_csv(
         self,
-        user_id: str = "default_user",
+        user_id: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         account_id: Optional[str] = None,
@@ -121,7 +121,7 @@ class ExportService:
 
     def export_to_excel(
         self,
-        user_id: str = "default_user",
+        user_id: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         account_id: Optional[str] = None
@@ -271,7 +271,7 @@ class ExportService:
 
     def export_to_pdf(
         self,
-        user_id: str = "default_user",
+        user_id: str,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
         account_id: Optional[str] = None

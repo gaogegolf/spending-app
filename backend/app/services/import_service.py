@@ -242,6 +242,10 @@ class ImportService:
             parsed_txns = import_record.import_metadata['parsed_transactions']
             file_hash = import_record.file_hash
 
+            # Get user_id from account for user-specific queries
+            account = self.db.query(Account).filter(Account.id == import_record.account_id).first()
+            user_id = account.user_id if account else None
+
             # Step 1: Deduplication - filter out existing transactions
             new_txns = self.dedup_service.filter_duplicates(
                 account_id=import_record.account_id,
@@ -264,7 +268,7 @@ class ImportService:
             unmatched_txns = []
 
             for txn_data in new_txns:
-                matched_rule = self.rule_engine.match_transaction_data(txn_data)
+                matched_rule = self.rule_engine.match_transaction_data(txn_data, user_id)
 
                 if matched_rule:
                     classified_txn = self.rule_engine.apply_rule_to_data(
@@ -281,10 +285,10 @@ class ImportService:
 
             for txn in unmatched_txns:
                 merchant_normalized = txn.get('merchant_normalized', '')
-                if merchant_normalized:
+                if merchant_normalized and user_id:
                     from app.models.merchant_category import MerchantCategory
                     learned = self.db.query(MerchantCategory).filter(
-                        MerchantCategory.user_id == 'default_user',
+                        MerchantCategory.user_id == user_id,
                         MerchantCategory.merchant_normalized == merchant_normalized
                     ).first()
 
@@ -388,7 +392,7 @@ class ImportService:
                 # If LLM disabled, use default classification
                 # Also merge with original transaction data
                 llm_classified_txns = [
-                    {**txn, **self._default_classification(txn)} for txn in non_payment_txns
+                    {**txn, **self._default_classification(txn, user_id)} for txn in non_payment_txns
                 ]
 
             # Step 5: Merge all classified transactions and insert
@@ -510,7 +514,7 @@ class ImportService:
         """Get file path for import record."""
         return self.upload_dir / f"{import_record.id}_{import_record.filename}"
 
-    def _default_classification(self, txn_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _default_classification(self, txn_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
         """Apply default classification when LLM is disabled or fails.
 
         Priority order:
@@ -544,9 +548,9 @@ class ImportService:
             }
 
         # Priority 1: Check if we've learned a category for this merchant
-        if merchant_normalized:
+        if merchant_normalized and user_id:
             learned = self.db.query(MerchantCategory).filter(
-                MerchantCategory.user_id == 'default_user',
+                MerchantCategory.user_id == user_id,
                 MerchantCategory.merchant_normalized == merchant_normalized
             ).first()
 

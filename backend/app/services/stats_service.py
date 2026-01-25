@@ -21,7 +21,7 @@ class StatsService:
         self.db = db
 
     def get_monthly_summary(self, year: int, month: int,
-                           user_id: str = "default_user",
+                           user_id: str,
                            account_id: str = None) -> Dict[str, Any]:
         """Calculate monthly spending/income summary.
 
@@ -113,7 +113,7 @@ class StatsService:
             ]
         }
 
-    def get_yearly_summary(self, year: int, user_id: str = "default_user",
+    def get_yearly_summary(self, year: int, user_id: str,
                           account_id: str = None) -> Dict[str, Any]:
         """Calculate yearly spending trends.
 
@@ -147,7 +147,7 @@ class StatsService:
         }
 
     def get_category_breakdown(self, start_date: date, end_date: date,
-                               user_id: str = "default_user",
+                               user_id: str,
                                account_id: str = None) -> List[Dict[str, Any]]:
         """Get spending breakdown by category for a date range.
 
@@ -191,7 +191,7 @@ class StatsService:
         ]
 
     def get_merchant_analysis(self, start_date: date, end_date: date,
-                              user_id: str = "default_user",
+                              user_id: str,
                               limit: int = 20) -> List[Dict[str, Any]]:
         """Get top merchants by spending.
 
@@ -231,7 +231,7 @@ class StatsService:
         ]
 
     def get_date_range_summary(self, start_date: date, end_date: date,
-                                user_id: str = "default_user",
+                                user_id: str,
                                 account_id: str = None) -> Dict[str, Any]:
         """Calculate summary for a custom date range.
 
@@ -316,7 +316,7 @@ class StatsService:
             ]
         }
 
-    def get_overview(self, user_id: str = "default_user") -> Dict[str, Any]:
+    def get_overview(self, user_id: str) -> Dict[str, Any]:
         """Get dashboard overview with current month and recent transactions.
 
         Args:
@@ -342,7 +342,7 @@ class StatsService:
         }
 
     def get_yoy_comparison(self, year1: int, year2: int,
-                           user_id: str = "default_user",
+                           user_id: str,
                            account_id: str = None) -> Dict[str, Any]:
         """Compare spending between two years (year-over-year).
 
@@ -396,7 +396,7 @@ class StatsService:
         }
 
     def get_yoy_monthly_comparison(self, month: int, year1: int, year2: int,
-                                   user_id: str = "default_user",
+                                   user_id: str,
                                    account_id: str = None) -> Dict[str, Any]:
         """Compare the same month across two years.
 
@@ -451,7 +451,7 @@ class StatsService:
             'category_comparison': category_comparison,
         }
 
-    def get_spending_velocity(self, user_id: str = "default_user",
+    def get_spending_velocity(self, user_id: str,
                               months: int = 12,
                               account_id: str = None) -> Dict[str, Any]:
         """Calculate spending velocity (trend) over recent months.

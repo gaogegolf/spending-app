@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.rule import Rule, RuleType
 from app.models.transaction import Transaction
+from app.models.account import Account
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 from app.schemas.rule import (
     RuleCreate,
     RuleUpdate,
@@ -65,6 +68,7 @@ def list_rules(
     search: Optional[str] = Query(None, description="Search by rule name"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=1000),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """List rules with filters and pagination.
@@ -75,12 +79,13 @@ def list_rules(
         search: Search by rule name
         page: Page number (1-indexed)
         page_size: Items per page
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Paginated list of rules
     """
-    query = db.query(Rule).filter(Rule.user_id == 'default_user')
+    query = db.query(Rule).filter(Rule.user_id == current_user.id)
 
     # Apply filters
     if rule_type:
@@ -109,12 +114,14 @@ def list_rules(
 @router.get("/rules/{rule_id}", response_model=RuleResponse)
 def get_rule(
     rule_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get rule by ID.
 
     Args:
         rule_id: Rule ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -122,7 +129,7 @@ def get_rule(
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -137,12 +144,14 @@ def get_rule(
 @router.post("/rules", response_model=RuleResponse, status_code=status.HTTP_201_CREATED)
 def create_rule(
     data: RuleCreate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Create a new classification rule.
 
     Args:
         data: Rule creation data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -153,7 +162,7 @@ def create_rule(
 
     # Create rule
     rule = Rule(
-        user_id='default_user',
+        user_id=current_user.id,
         name=data.name,
         rule_type=data.rule_type,
         pattern=data.pattern,
@@ -175,6 +184,7 @@ def create_rule(
 def update_rule(
     rule_id: str,
     data: RuleUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update a rule.
@@ -182,6 +192,7 @@ def update_rule(
     Args:
         rule_id: Rule ID
         data: Update data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -189,7 +200,7 @@ def update_rule(
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -227,17 +238,19 @@ def update_rule(
 @router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_rule(
     rule_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a rule.
 
     Args:
         rule_id: Rule ID
+        current_user: Authenticated user
         db: Database session
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -253,12 +266,14 @@ def delete_rule(
 @router.post("/rules/{rule_id}/toggle", response_model=RuleResponse)
 def toggle_rule(
     rule_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Toggle rule active status.
 
     Args:
         rule_id: Rule ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -266,7 +281,7 @@ def toggle_rule(
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -285,12 +300,14 @@ def toggle_rule(
 @router.post("/rules/bulk-delete", response_model=dict)
 def bulk_delete_rules(
     rule_ids: List[str],
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete multiple rules.
 
     Args:
         rule_ids: List of rule IDs to delete
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -298,7 +315,7 @@ def bulk_delete_rules(
     """
     deleted_count = db.query(Rule).filter(
         Rule.id.in_(rule_ids),
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).delete(synchronize_session=False)
 
     db.commit()
@@ -312,12 +329,14 @@ def bulk_delete_rules(
 @router.get("/rules/{rule_id}/match-count", response_model=dict)
 def get_rule_match_count(
     rule_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get count of existing transactions that match this rule.
 
     Args:
         rule_id: Rule ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -325,7 +344,7 @@ def get_rule_match_count(
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -334,9 +353,9 @@ def get_rule_match_count(
             detail=f"Rule {rule_id} not found"
         )
 
-    # Get all transactions and count matches
+    # Get only user's transactions via Account join and count matches
     rule_engine = RuleEngine(db)
-    transactions = db.query(Transaction).all()
+    transactions = db.query(Transaction).join(Account).filter(Account.user_id == current_user.id).all()
 
     match_count = 0
     for transaction in transactions:
@@ -353,12 +372,14 @@ def get_rule_match_count(
 @router.post("/rules/{rule_id}/apply", response_model=dict)
 def apply_rule_to_transactions(
     rule_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Apply a rule to all matching existing transactions.
 
     Args:
         rule_id: Rule ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -366,7 +387,7 @@ def apply_rule_to_transactions(
     """
     rule = db.query(Rule).filter(
         Rule.id == rule_id,
-        Rule.user_id == 'default_user'
+        Rule.user_id == current_user.id
     ).first()
 
     if not rule:
@@ -375,9 +396,9 @@ def apply_rule_to_transactions(
             detail=f"Rule {rule_id} not found"
         )
 
-    # Get all transactions
+    # Get only user's transactions via Account join
     rule_engine = RuleEngine(db)
-    transactions = db.query(Transaction).all()
+    transactions = db.query(Transaction).join(Account).filter(Account.user_id == current_user.id).all()
 
     updated_count = 0
     for transaction in transactions:
@@ -401,6 +422,7 @@ def apply_rule_to_transactions(
 
 @router.post("/rules/refresh-counts", response_model=dict)
 def refresh_all_match_counts(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Refresh match counts for all rules by recounting actual matches.
@@ -408,13 +430,14 @@ def refresh_all_match_counts(
     This recalculates the match_count for each rule based on current transactions.
 
     Args:
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Summary of refreshed counts
     """
-    rules = db.query(Rule).filter(Rule.user_id == 'default_user').all()
-    transactions = db.query(Transaction).all()
+    rules = db.query(Rule).filter(Rule.user_id == current_user.id).all()
+    transactions = db.query(Transaction).join(Account).filter(Account.user_id == current_user.id).all()
     rule_engine = RuleEngine(db)
 
     updated_rules = []

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import Link from 'next/link';
+import PasswordStrengthIndicator from '@/app/components/PasswordStrengthIndicator';
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -115,7 +116,7 @@ export default function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
               />
-              <p className="mt-1 text-xs text-gray-500">Minimum 8 characters</p>
+              <PasswordStrengthIndicator password={password} />
             </div>
 
             <div>

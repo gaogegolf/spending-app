@@ -25,7 +25,7 @@ class Rule(Base):
     __tablename__ = "rules"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(String(36), nullable=False, default="default_user")  # Simplified for MVP
+    user_id = Column(String(36), nullable=False)  # Required - no default to prevent data leakage
     rule_type = Column(Enum(RuleType), nullable=False)
     pattern = Column(Text, nullable=False)  # Pattern to match (merchant name, regex, JSON for complex)
     action = Column(JSON, nullable=False)  # Action to take: {transaction_type, category, subcategory, is_spend, etc.}

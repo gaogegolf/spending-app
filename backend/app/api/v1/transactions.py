@@ -11,8 +11,11 @@ from sqlalchemy import or_
 
 from app.database import get_db
 from app.models.transaction import Transaction, TransactionType
+from app.models.account import Account
 from app.models.merchant_category import MerchantCategory
 from app.models.rule import Rule
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 from app.services.classifier.rule_engine import RuleEngine
 from app.schemas.transaction import (
     TransactionCreate,
@@ -39,6 +42,7 @@ def list_transactions(
     needs_review: Optional[bool] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=10000),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """List transactions with filters and pagination.
@@ -56,6 +60,7 @@ def list_transactions(
         needs_review: Filter by review flag
         page: Page number (1-indexed)
         page_size: Items per page
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -63,10 +68,12 @@ def list_transactions(
     """
     from sqlalchemy import or_
 
-    query = db.query(Transaction)
+    # Base query: only user's transactions via Account join
+    query = db.query(Transaction).join(Account).filter(Account.user_id == current_user.id)
 
     # Apply filters
     if account_id:
+        # Verify account belongs to user (already filtered above, but be explicit)
         query = query.filter(Transaction.account_id == account_id)
     if start_date:
         query = query.filter(Transaction.date >= start_date)
@@ -139,6 +146,7 @@ def export_transactions(
     description: Optional[str] = Query(None, description="Search in description/merchant"),
     match_rule_pattern: Optional[str] = Query(None, description="Filter by rule pattern"),
     format: str = Query("csv", description="Export format: csv"),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Export transactions as CSV file.
@@ -154,12 +162,14 @@ def export_transactions(
         description: Search in description_raw or merchant_normalized
         match_rule_pattern: Filter by rule pattern (dynamic matching)
         format: Export format (currently only CSV supported)
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         CSV file download
     """
-    query = db.query(Transaction)
+    # Base query: only user's transactions via Account join
+    query = db.query(Transaction).join(Account).filter(Account.user_id == current_user.id)
 
     # Apply filters
     if account_id:
@@ -260,18 +270,24 @@ def export_transactions(
 @router.get("/transactions/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(
     transaction_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get transaction by ID.
 
     Args:
         transaction_id: Transaction ID
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Transaction details
     """
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    # Verify transaction belongs to user via Account
+    transaction = db.query(Transaction).join(Account).filter(
+        Transaction.id == transaction_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not transaction:
         raise HTTPException(
@@ -286,6 +302,7 @@ def get_transaction(
 def update_transaction(
     transaction_id: str,
     transaction_data: TransactionUpdate,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Update a transaction.
@@ -293,12 +310,17 @@ def update_transaction(
     Args:
         transaction_id: Transaction ID
         transaction_data: Transaction update data
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Updated transaction
     """
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    # Verify transaction belongs to user via Account
+    transaction = db.query(Transaction).join(Account).filter(
+        Transaction.id == transaction_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not transaction:
         raise HTTPException(
@@ -336,7 +358,7 @@ def update_transaction(
             db=db,
             merchant_normalized=transaction.merchant_normalized,
             category=transaction.category,
-            user_id='default_user'
+            user_id=current_user.id
         )
 
     db.commit()
@@ -348,19 +370,23 @@ def update_transaction(
 @router.post("/transactions/bulk-update", response_model=dict)
 def bulk_update_transactions(
     request: BulkUpdateRequest,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Bulk update multiple transactions.
 
     Args:
         request: Bulk update request with transaction IDs and updates
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Update summary
     """
-    transactions = db.query(Transaction).filter(
-        Transaction.id.in_(request.transaction_ids)
+    # Verify all transactions belong to user via Account join
+    transactions = db.query(Transaction).join(Account).filter(
+        Transaction.id.in_(request.transaction_ids),
+        Account.user_id == current_user.id
     ).all()
 
     if len(transactions) != len(request.transaction_ids):
@@ -399,15 +425,21 @@ def bulk_update_transactions(
 @router.delete("/transactions/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_transaction(
     transaction_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Delete a transaction.
 
     Args:
         transaction_id: Transaction ID
+        current_user: Authenticated user
         db: Database session
     """
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    # Verify transaction belongs to user via Account
+    transaction = db.query(Transaction).join(Account).filter(
+        Transaction.id == transaction_id,
+        Account.user_id == current_user.id
+    ).first()
 
     if not transaction:
         raise HTTPException(
@@ -422,19 +454,23 @@ def delete_transaction(
 @router.post("/transactions/bulk-delete", response_model=dict)
 def bulk_delete_transactions(
     transaction_ids: list[str],
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Bulk delete multiple transactions.
 
     Args:
         transaction_ids: List of transaction IDs to delete
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Delete summary
     """
-    transactions = db.query(Transaction).filter(
-        Transaction.id.in_(transaction_ids)
+    # Verify all transactions belong to user via Account join
+    transactions = db.query(Transaction).join(Account).filter(
+        Transaction.id.in_(transaction_ids),
+        Account.user_id == current_user.id
     ).all()
 
     deleted_count = len(transactions)
@@ -452,6 +488,7 @@ def bulk_delete_transactions(
 
 @router.post("/transactions/reclassify-all", response_model=dict)
 def reclassify_all_transactions(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Re-classify all existing transactions using the latest classification logic.
@@ -464,8 +501,10 @@ def reclassify_all_transactions(
     from app.services.import_service import ImportService
     from app.config import settings
 
-    # Get all transactions
-    transactions = db.query(Transaction).all()
+    # Get only user's transactions via Account join
+    transactions = db.query(Transaction).join(Account).filter(
+        Account.user_id == current_user.id
+    ).all()
 
     if not transactions:
         return {
@@ -511,7 +550,7 @@ def reclassify_all_transactions(
 
                 if merchant_normalized:
                     learned = db.query(MerchantCategory).filter(
-                        MerchantCategory.user_id == 'default_user',
+                        MerchantCategory.user_id == current_user.id,
                         MerchantCategory.merchant_normalized == merchant_normalized
                     ).first()
 
@@ -559,7 +598,7 @@ def reclassify_all_transactions(
     }
 
 
-def _learn_merchant_category(db: Session, merchant_normalized: str, category: str, user_id: str = 'default_user'):
+def _learn_merchant_category(db: Session, merchant_normalized: str, category: str, user_id: str):
     """Learn or update merchant category mapping.
 
     When a user manually categorizes a transaction, we save the merchant → category mapping
@@ -569,7 +608,7 @@ def _learn_merchant_category(db: Session, merchant_normalized: str, category: st
         db: Database session
         merchant_normalized: Normalized merchant name
         category: Category name (can be custom or predefined)
-        user_id: User ID (defaults to 'default_user')
+        user_id: User ID
     """
     import uuid
     from datetime import datetime
@@ -606,6 +645,7 @@ def _learn_merchant_category(db: Session, merchant_normalized: str, category: st
 def get_merchant_transaction_count(
     merchant_normalized: str,
     exclude_transaction_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get count of transactions with a specific merchant.
@@ -613,13 +653,16 @@ def get_merchant_transaction_count(
     Args:
         merchant_normalized: The normalized merchant name
         exclude_transaction_id: Optional transaction ID to exclude from count
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Count of matching transactions
     """
-    query = db.query(Transaction).filter(
-        Transaction.merchant_normalized == merchant_normalized
+    # Only count user's transactions via Account join
+    query = db.query(Transaction).join(Account).filter(
+        Transaction.merchant_normalized == merchant_normalized,
+        Account.user_id == current_user.id
     )
 
     if exclude_transaction_id:
@@ -639,6 +682,7 @@ def apply_category_to_merchant_transactions(
     merchant_normalized: str = Query(...),
     category: str = Query(...),
     exclude_transaction_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Apply a category to all transactions with a specific merchant.
@@ -647,13 +691,16 @@ def apply_category_to_merchant_transactions(
         merchant_normalized: The normalized merchant name
         category: The category to apply
         exclude_transaction_id: Optional transaction ID to exclude
+        current_user: Authenticated user
         db: Database session
 
     Returns:
         Count of updated transactions
     """
-    query = db.query(Transaction).filter(
-        Transaction.merchant_normalized == merchant_normalized
+    # Only update user's transactions via Account join
+    query = db.query(Transaction).join(Account).filter(
+        Transaction.merchant_normalized == merchant_normalized,
+        Account.user_id == current_user.id
     )
 
     if exclude_transaction_id:

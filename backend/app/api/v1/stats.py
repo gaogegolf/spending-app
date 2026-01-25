@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.services.stats_service import StatsService
+from app.models.user import User
+from app.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -16,6 +18,7 @@ def get_monthly_summary(
     year: int = Query(..., ge=2000, le=2100),
     month: int = Query(..., ge=1, le=12),
     account_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get monthly spending and income summary.
@@ -24,6 +27,7 @@ def get_monthly_summary(
         year: Year
         month: Month (1-12)
         account_id: Optional account ID to filter by
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -35,6 +39,7 @@ def get_monthly_summary(
         summary = stats_service.get_monthly_summary(
             year=year,
             month=month,
+            user_id=current_user.id,
             account_id=account_id
         )
         return summary
@@ -50,6 +55,7 @@ def get_monthly_summary(
 def get_yearly_summary(
     year: int = Query(..., ge=2000, le=2100),
     account_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get yearly spending trends with monthly breakdown.
@@ -57,6 +63,7 @@ def get_yearly_summary(
     Args:
         year: Year
         account_id: Optional account ID to filter by
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -67,6 +74,7 @@ def get_yearly_summary(
     try:
         summary = stats_service.get_yearly_summary(
             year=year,
+            user_id=current_user.id,
             account_id=account_id
         )
         return summary
@@ -83,6 +91,7 @@ def get_date_range_summary(
     start_date: date = Query(...),
     end_date: date = Query(...),
     account_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get spending and income summary for a custom date range.
@@ -91,6 +100,7 @@ def get_date_range_summary(
         start_date: Start date (inclusive)
         end_date: End date (inclusive)
         account_id: Optional account ID to filter by
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -102,6 +112,7 @@ def get_date_range_summary(
         summary = stats_service.get_date_range_summary(
             start_date=start_date,
             end_date=end_date,
+            user_id=current_user.id,
             account_id=account_id
         )
         return summary
@@ -118,6 +129,7 @@ def get_category_breakdown(
     start_date: date = Query(...),
     end_date: date = Query(...),
     account_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get spending breakdown by category.
@@ -126,6 +138,7 @@ def get_category_breakdown(
         start_date: Start date
         end_date: End date
         account_id: Optional account ID to filter by
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -137,6 +150,7 @@ def get_category_breakdown(
         breakdown = stats_service.get_category_breakdown(
             start_date=start_date,
             end_date=end_date,
+            user_id=current_user.id,
             account_id=account_id
         )
 
@@ -161,6 +175,7 @@ def get_merchant_analysis(
     start_date: date = Query(...),
     end_date: date = Query(...),
     limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get top merchants by spending.
@@ -169,6 +184,7 @@ def get_merchant_analysis(
         start_date: Start date
         end_date: End date
         limit: Number of top merchants to return
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -180,6 +196,7 @@ def get_merchant_analysis(
         merchants = stats_service.get_merchant_analysis(
             start_date=start_date,
             end_date=end_date,
+            user_id=current_user.id,
             limit=limit
         )
 
@@ -199,11 +216,13 @@ def get_merchant_analysis(
 
 @router.get("/stats/overview")
 def get_overview(
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Get dashboard overview with current month summary.
 
     Args:
+        current_user: Authenticated user
         db: Database session
 
     Returns:
@@ -212,7 +231,7 @@ def get_overview(
     stats_service = StatsService(db)
 
     try:
-        overview = stats_service.get_overview()
+        overview = stats_service.get_overview(user_id=current_user.id)
         return overview
 
     except Exception as e:
