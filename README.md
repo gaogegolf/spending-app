@@ -35,6 +35,23 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 - **Review Queue**: Flag items needing attention
 - **Bulk Operations**: Manage multiple transactions
 
+### Merchant Categories
+- **Custom Mappings**: Save merchant-to-category mappings
+- **Auto-Apply**: Automatically categorize future transactions
+- **Bulk Management**: View and edit all merchant mappings
+
+### Rules Engine
+- **Text Match**: Categorize by description keywords
+- **Regex Support**: Advanced pattern matching
+- **Amount Range**: Rules based on transaction amounts
+- **Priority Order**: Control rule execution order
+
+### Reports & Export
+- **Year-over-Year**: Compare spending across years
+- **Monthly Comparison**: Same month, different years
+- **Spending Velocity**: Track spending pace within month
+- **CSV Export**: Download transactions for external use
+
 ### Authentication & Account Management
 - **User Registration**: With password strength indicator
 - **Session Management**: View and revoke active login sessions
@@ -94,7 +111,11 @@ Frontend: http://localhost:3001
 | `POST /api/v1/imports/upload` | Upload statement file |
 | `GET /api/v1/transactions` | List transactions (with filters) |
 | `GET /api/v1/stats/monthly` | Monthly summary |
+| `GET /api/v1/stats/yoy` | Year-over-year comparison |
 | `GET /api/v1/accounts` | List accounts |
+| `GET /api/v1/merchant-categories` | List merchant mappings |
+| `GET /api/v1/rules` | List categorization rules |
+| `GET /api/v1/reports/export` | Export transactions to CSV |
 
 Full API docs: http://localhost:8000/docs
 
@@ -115,9 +136,11 @@ Full API docs: http://localhost:8000/docs
 | Any Bank | CSV | Supported |
 
 ## Privacy & Security
-- Only date/description/amount sent to AI (no personal info)
-- Local SQLite database by default
-- Uploaded files deleted after processing
+- **Data Isolation**: Multi-user support with strict data separation
+- **JWT Authentication**: Secure token-based auth with refresh tokens
+- **Minimal AI Data**: Only date/description/amount sent to AI (no personal info)
+- **Local Storage**: SQLite database by default
+- **Auto Cleanup**: Uploaded files deleted after processing
 
 ## License
 MIT
