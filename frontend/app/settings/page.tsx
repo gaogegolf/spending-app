@@ -22,6 +22,28 @@ interface Session {
   is_current: boolean;
 }
 
+interface BackupPreview {
+  data_counts: {
+    accounts: number;
+    transactions: number;
+    rules: number;
+    merchant_categories: number;
+    import_records: number;
+    holdings_snapshots: number;
+    positions: number;
+    fx_rates: number;
+  };
+}
+
+interface RestoreResult {
+  status: 'success' | 'partial' | 'error';
+  message: string;
+  details: {
+    [key: string]: { created: number; skipped: number; errors: number };
+  };
+  errors: string[];
+}
+
 const API_BASE_URL = '/api/v1';
 
 export default function SettingsPage() {
@@ -49,6 +71,17 @@ export default function SettingsPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Backup state
+  const [backupPreview, setBackupPreview] = useState<BackupPreview | null>(null);
+  const [backupLoading, setBackupLoading] = useState(true);
+  const [exportLoading, setExportLoading] = useState<'json' | 'zip' | null>(null);
+
+  // Restore state
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<RestoreResult | null>(null);
+  const [conflictMode, setConflictMode] = useState<'skip' | 'error'>('skip');
+
   // Initialize form with user data
   useEffect(() => {
     if (user) {
@@ -60,6 +93,11 @@ export default function SettingsPage() {
   // Fetch sessions
   useEffect(() => {
     fetchSessions();
+  }, [accessToken]);
+
+  // Fetch backup preview
+  useEffect(() => {
+    fetchBackupPreview();
   }, [accessToken]);
 
   async function fetchSessions() {
@@ -78,6 +116,116 @@ export default function SettingsPage() {
       console.error('Failed to fetch sessions:', error);
     } finally {
       setSessionsLoading(false);
+    }
+  }
+
+  async function fetchBackupPreview() {
+    if (!accessToken) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/backup/preview`, {
+        headers: getAuthHeader(),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBackupPreview(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch backup preview:', error);
+    } finally {
+      setBackupLoading(false);
+    }
+  }
+
+  async function handleExportBackup(format: 'json' | 'zip') {
+    setExportLoading(format);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/backup/export?format=${format}`, {
+        headers: getAuthHeader(),
+      });
+
+      if (response.ok) {
+        // Get filename from Content-Disposition header or create default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = `spending_app_backup.${format}`;
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename=(.+)/);
+          if (match) {
+            filename = match[1].replace(/"/g, '');
+          }
+        }
+
+        // Download the file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        console.error('Failed to export backup');
+      }
+    } catch (error) {
+      console.error('Failed to export backup:', error);
+    } finally {
+      setExportLoading(null);
+    }
+  }
+
+  async function handleRestore() {
+    if (!restoreFile) return;
+
+    setRestoreLoading(true);
+    setRestoreResult(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', restoreFile);
+
+      const response = await fetch(
+        `${API_BASE_URL}/backup/restore?conflict_mode=${conflictMode}`,
+        {
+          method: 'POST',
+          headers: getAuthHeader(),
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setRestoreResult(data);
+        // Refresh the backup preview to show new counts
+        fetchBackupPreview();
+      } else {
+        // Handle error response - detail might be the full result object or a string
+        const errorDetail = data.detail;
+        if (typeof errorDetail === 'object') {
+          setRestoreResult(errorDetail);
+        } else {
+          setRestoreResult({
+            status: 'error',
+            message: errorDetail || 'Restore failed',
+            details: {},
+            errors: [errorDetail || 'Unknown error'],
+          });
+        }
+      }
+    } catch (error) {
+      setRestoreResult({
+        status: 'error',
+        message: 'Failed to restore backup',
+        details: {},
+        errors: [String(error)],
+      });
+    } finally {
+      setRestoreLoading(false);
+      setRestoreFile(null);
     }
   }
 
@@ -395,6 +543,188 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Data Backup Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Data Backup</CardTitle>
+          <CardDescription>
+            Export all your data for backup or migration purposes
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {backupLoading ? (
+            <p className="text-muted-foreground">Loading data summary...</p>
+          ) : backupPreview ? (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="font-medium text-foreground">{backupPreview.data_counts.accounts}</div>
+                  <div className="text-muted-foreground">Accounts</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="font-medium text-foreground">{backupPreview.data_counts.transactions.toLocaleString()}</div>
+                  <div className="text-muted-foreground">Transactions</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="font-medium text-foreground">{backupPreview.data_counts.rules}</div>
+                  <div className="text-muted-foreground">Rules</div>
+                </div>
+                <div className="p-3 bg-muted rounded-lg">
+                  <div className="font-medium text-foreground">{backupPreview.data_counts.merchant_categories}</div>
+                  <div className="text-muted-foreground">Categories</div>
+                </div>
+              </div>
+
+              {(backupPreview.data_counts.holdings_snapshots > 0 || backupPreview.data_counts.positions > 0) && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="font-medium text-foreground">{backupPreview.data_counts.holdings_snapshots}</div>
+                    <div className="text-muted-foreground">Snapshots</div>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="font-medium text-foreground">{backupPreview.data_counts.positions}</div>
+                    <div className="text-muted-foreground">Positions</div>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="font-medium text-foreground">{backupPreview.data_counts.fx_rates}</div>
+                    <div className="text-muted-foreground">FX Rates</div>
+                  </div>
+                  <div className="p-3 bg-muted rounded-lg">
+                    <div className="font-medium text-foreground">{backupPreview.data_counts.import_records}</div>
+                    <div className="text-muted-foreground">Imports</div>
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  onClick={() => handleExportBackup('json')}
+                  disabled={exportLoading !== null}
+                >
+                  {exportLoading === 'json' ? 'Downloading...' : 'Download JSON Backup'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleExportBackup('zip')}
+                  disabled={exportLoading !== null}
+                >
+                  {exportLoading === 'zip' ? 'Downloading...' : 'Download ZIP Archive'}
+                </Button>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                JSON: Single file with all data. ZIP: Multiple files organized by type.
+              </p>
+
+              <Separator className="my-6" />
+
+              {/* Restore Section */}
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium text-foreground">Restore from Backup</h4>
+                  <p className="text-sm text-muted-foreground">
+                    Upload a previously exported backup file to restore your data
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="restoreFile">Backup File</Label>
+                    <Input
+                      id="restoreFile"
+                      type="file"
+                      accept=".json,.zip"
+                      onChange={(e) => {
+                        setRestoreFile(e.target.files?.[0] || null);
+                        setRestoreResult(null);
+                      }}
+                      disabled={restoreLoading}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Conflict Handling</Label>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="conflictMode"
+                          value="skip"
+                          checked={conflictMode === 'skip'}
+                          onChange={() => setConflictMode('skip')}
+                          disabled={restoreLoading}
+                        />
+                        Skip duplicates
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="radio"
+                          name="conflictMode"
+                          value="error"
+                          checked={conflictMode === 'error'}
+                          onChange={() => setConflictMode('error')}
+                          disabled={restoreLoading}
+                        />
+                        Fail on conflict
+                      </label>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleRestore}
+                    disabled={!restoreFile || restoreLoading}
+                    variant="outline"
+                  >
+                    {restoreLoading ? 'Restoring...' : 'Restore from Backup'}
+                  </Button>
+                </div>
+
+                {restoreResult && (
+                  <Alert variant={restoreResult.status === 'error' ? 'destructive' : 'default'}>
+                    <AlertDescription>
+                      <div className="space-y-2">
+                        <p className="font-medium">{restoreResult.message}</p>
+                        {Object.keys(restoreResult.details).length > 0 && (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                            {Object.entries(restoreResult.details).map(([key, counts]) => (
+                              <div key={key} className="p-2 bg-muted/50 rounded">
+                                <div className="font-medium capitalize">{key.replace('_', ' ')}</div>
+                                <div>+{counts.created} created</div>
+                                {counts.skipped > 0 && <div>{counts.skipped} skipped</div>}
+                                {counts.errors > 0 && <div className="text-destructive">{counts.errors} errors</div>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {restoreResult.errors.length > 0 && (
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-destructive">
+                              {restoreResult.errors.length} error(s)
+                            </summary>
+                            <ul className="mt-1 list-disc list-inside">
+                              {restoreResult.errors.slice(0, 10).map((err, i) => (
+                                <li key={i}>{err}</li>
+                              ))}
+                              {restoreResult.errors.length > 10 && (
+                                <li>... and {restoreResult.errors.length - 10} more</li>
+                              )}
+                            </ul>
+                          </details>
+                        )}
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-muted-foreground">Unable to load data summary</p>
           )}
         </CardContent>
       </Card>
