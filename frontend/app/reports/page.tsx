@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   getYoYComparison,
   getYoYMonthlyComparison,
@@ -14,6 +14,15 @@ import {
   SpendingVelocityResponse,
   Account,
 } from '@/lib/types';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -125,7 +134,7 @@ export default function ReportsPage() {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
   }
 
-  function formatChange(change: number, changePct: number): JSX.Element {
+  function formatChange(change: number, changePct: number): React.ReactNode {
     const isPositive = change > 0;
     const color = isPositive ? 'text-red-600' : 'text-green-600';
     const arrow = isPositive ? '↑' : '↓';

@@ -6,6 +6,13 @@ import Link from 'next/link';
 import { getYearlySummary, getMerchantAnalysis, getAccounts, getDateRangeSummary, getNetWorth } from '@/lib/api';
 import { Account, NetWorthData } from '@/lib/types';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+
 interface MonthlySummary {
   total_spend: number;
   total_income: number;
@@ -151,16 +158,15 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-          <div className="bg-white rounded-2xl shadow-2xl border border-red-200 p-8">
-            <h3 className="text-xl font-bold text-gray-900 mb-2">Oops! Something went wrong</h3>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <button
-              onClick={loadData}
-              className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-semibold rounded-xl hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-lg"
-            >
-              Try Again
-            </button>
-          </div>
+          <Card className="border-red-200">
+            <CardContent className="p-8">
+              <h3 className="text-xl font-bold text-foreground mb-2">Oops! Something went wrong</h3>
+              <p className="text-muted-foreground mb-4">{error}</p>
+              <Button onClick={loadData} variant="gradient" size="lg">
+                Try Again
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
@@ -207,9 +213,9 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-3">
                 {selectedAccount && (
-                  <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                  <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">
                     {accounts.find(a => a.id === selectedAccount)?.name || 'Account filtered'}
-                  </span>
+                  </Badge>
                 )}
               </div>
             </div>
@@ -277,13 +283,15 @@ export default function Dashboard() {
                 };
 
                 return (
-                  <button
+                  <Button
                     key={preset.value}
                     onClick={handlePresetClick}
-                    className="px-4 py-2 text-sm font-semibold text-gray-600 bg-white hover:bg-indigo-50 hover:text-indigo-700 rounded-xl transition-all border border-gray-200 hover:border-indigo-300 shadow-sm"
+                    variant="outline"
+                    size="sm"
+                    className="hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-300"
                   >
                     {preset.label}
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -295,24 +303,24 @@ export default function Dashboard() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Date Range */}
                 <div className="md:col-span-2">
-                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                  <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 block">
                     Custom Date Range
-                  </label>
+                  </Label>
                   <div className="flex items-center gap-4">
-                    <input
+                    <Input
                       type="date"
                       id="start-date"
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
-                      className="flex-1 px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                      className="flex-1"
                     />
-                    <span className="text-gray-400 font-medium">to</span>
-                    <input
+                    <span className="text-muted-foreground font-medium">to</span>
+                    <Input
                       type="date"
                       id="end-date"
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
-                      className="flex-1 px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                      className="flex-1"
                     />
                   </div>
                 </div>
@@ -320,22 +328,25 @@ export default function Dashboard() {
                 {/* Account Filter */}
                 {accounts.length > 0 && (
                   <div>
-                    <label htmlFor="account-filter" className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
+                    <Label htmlFor="account-filter" className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-3 block">
                       Account
-                    </label>
-                    <select
-                      id="account-filter"
-                      value={selectedAccount}
-                      onChange={(e) => setSelectedAccount(e.target.value)}
-                      className="block w-full px-4 py-3 bg-white border-2 border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-4 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm font-medium transition-all hover:border-indigo-300"
+                    </Label>
+                    <Select
+                      value={selectedAccount || 'all'}
+                      onValueChange={(val) => setSelectedAccount(val === 'all' ? '' : val)}
                     >
-                      <option value="">All Accounts</option>
-                      {accounts.map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All Accounts" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Accounts</SelectItem>
+                        {accounts.map((account) => (
+                          <SelectItem key={account.id} value={account.id}>
+                            {account.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
               </div>
@@ -510,37 +521,31 @@ export default function Dashboard() {
             <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-8 mb-10">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
                 <h3 className="text-2xl font-bold text-gray-900">{chartTitles[chartMode]}</h3>
-                <div className="flex rounded-xl bg-gray-100 p-1 relative z-20">
-                  <button
+                <div className="flex rounded-xl bg-muted p-1 relative z-20">
+                  <Button
                     onClick={() => setChartMode('expense')}
-                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                      chartMode === 'expense'
-                        ? 'bg-white text-rose-600 shadow-md'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
+                    variant={chartMode === 'expense' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className={chartMode === 'expense' ? 'bg-background text-rose-600 shadow-md' : ''}
                   >
                     Expense
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={() => setChartMode('income')}
-                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                      chartMode === 'income'
-                        ? 'bg-white text-emerald-600 shadow-md'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
+                    variant={chartMode === 'income' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className={chartMode === 'income' ? 'bg-background text-emerald-600 shadow-md' : ''}
                   >
                     Income
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={() => setChartMode('net')}
-                    className={`px-4 py-2 text-sm font-semibold rounded-lg transition-all ${
-                      chartMode === 'net'
-                        ? 'bg-white text-blue-600 shadow-md'
-                        : 'text-gray-600 hover:text-gray-900'
-                    }`}
+                    variant={chartMode === 'net' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className={chartMode === 'net' ? 'bg-background text-blue-600 shadow-md' : ''}
                   >
                     Net
-                  </button>
+                  </Button>
                 </div>
               </div>
               <div className={`flex items-end justify-between gap-2 ${hasNegative ? 'items-center' : ''}`} style={{ height: `${chartHeight}px` }}>
@@ -843,17 +848,18 @@ export default function Dashboard() {
 
         {/* Empty State */}
         {(!summary?.category_breakdown || summary.category_breakdown.length === 0) && (
-          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-3xl border border-white/50 p-16 text-center">
-            <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-3">No transactions yet</h3>
-            <p className="text-gray-600 mb-8 text-lg max-w-md mx-auto">Get started by importing your transaction data to see your spending insights</p>
-            <a
-              href="/imports"
-              className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-lg rounded-2xl hover:from-indigo-700 hover:to-purple-700 transform hover:scale-105 transition-all duration-200 shadow-2xl hover:shadow-indigo-500/50"
-            >
-              <span>📤</span> Import Transactions
-            </a>
-          </div>
+          <Card className="bg-white/70 backdrop-blur-xl border-white/50 p-16 text-center">
+            <CardContent className="p-0">
+              <div className="text-6xl mb-6">📊</div>
+              <h3 className="text-2xl font-bold text-foreground mb-3">No transactions yet</h3>
+              <p className="text-muted-foreground mb-8 text-lg max-w-md mx-auto">Get started by importing your transaction data to see your spending insights</p>
+              <Button asChild variant="gradient" size="lg" className="text-lg">
+                <Link href="/imports">
+                  <span>📤</span> Import Transactions
+                </Link>
+              </Button>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

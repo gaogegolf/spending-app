@@ -4,6 +4,15 @@ import { useState, useEffect } from 'react';
 import { useAuth, getAuthHeader } from '@/lib/auth-context';
 import PasswordStrengthIndicator from '@/app/components/PasswordStrengthIndicator';
 
+// shadcn/ui components
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+
 interface Session {
   id: string;
   device_info: string | null;
@@ -225,235 +234,217 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">Account Settings</h1>
+    <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Account Settings</h1>
+        <p className="text-muted-foreground">Manage your account settings and preferences</p>
+      </div>
 
       {/* Profile Section */}
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Profile Information</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Profile Information</CardTitle>
+          <CardDescription>Update your account details</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleProfileUpdate} className="space-y-4">
+            {profileMessage && (
+              <Alert variant={profileMessage.type === 'error' ? 'destructive' : 'default'}>
+                <AlertDescription>{profileMessage.text}</AlertDescription>
+              </Alert>
+            )}
 
-        <form onSubmit={handleProfileUpdate} className="space-y-4">
-          {profileMessage && (
-            <div className={`px-4 py-3 rounded-lg ${
-              profileMessage.type === 'success'
-                ? 'bg-green-50 border border-green-200 text-green-700'
-                : 'bg-red-50 border border-red-200 text-red-700'
-            }`}>
-              {profileMessage.text}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-              Email
-            </label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-              Username
-            </label>
-            <input
-              type="text"
-              id="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              minLength={3}
-              maxLength={100}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={profileLoading}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {profileLoading ? 'Saving...' : 'Save Changes'}
-          </button>
-        </form>
-      </section>
-
-      {/* Password Section */}
-      <section className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Change Password</h2>
-
-        <form onSubmit={handlePasswordChange} className="space-y-4">
-          {passwordMessage && (
-            <div className={`px-4 py-3 rounded-lg ${
-              passwordMessage.type === 'success'
-                ? 'bg-green-50 border border-green-200 text-green-700'
-                : 'bg-red-50 border border-red-200 text-red-700'
-            }`}>
-              {passwordMessage.text}
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="currentPassword" className="block text-sm font-medium text-gray-700">
-              Current Password
-            </label>
-            <input
-              type="password"
-              id="currentPassword"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700">
-              New Password
-            </label>
-            <input
-              type="password"
-              id="newPassword"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              minLength={8}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-            <PasswordStrengthIndicator password={newPassword} />
-          </div>
-
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700">
-              Confirm New Password
-            </label>
-            <input
-              type="password"
-              id="confirmPassword"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={passwordLoading}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {passwordLoading ? 'Changing...' : 'Change Password'}
-          </button>
-        </form>
-      </section>
-
-      {/* Sessions Section */}
-      <section className="bg-white rounded-lg shadow p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Active Sessions</h2>
-          {sessions.length > 1 && (
-            <button
-              onClick={handleLogoutAll}
-              className="text-sm text-red-600 hover:text-red-700"
-            >
-              Logout all other sessions
-            </button>
-          )}
-        </div>
-
-        {sessionsLoading ? (
-          <p className="text-gray-500">Loading sessions...</p>
-        ) : sessions.length === 0 ? (
-          <p className="text-gray-500">No active sessions</p>
-        ) : (
-          <div className="space-y-3">
-            {sessions.map((session, index) => (
-              <div
-                key={session.id}
-                className="flex items-center justify-between p-4 border border-gray-200 rounded-lg"
-              >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-gray-900">
-                      {parseUserAgent(session.device_info)}
-                    </span>
-                    {index === 0 && (
-                      <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">
-                        Current
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    {session.ip_address && <span>{session.ip_address} &middot; </span>}
-                    Last active: {formatDate(session.last_activity)}
-                  </div>
-                </div>
-                {index !== 0 && (
-                  <button
-                    onClick={() => handleRevokeSession(session.id)}
-                    className="text-sm text-red-600 hover:text-red-700"
-                  >
-                    Revoke
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Delete Account Section */}
-      <section className="bg-white rounded-lg shadow p-6 border-2 border-red-200">
-        <h2 className="text-lg font-semibold text-red-600 mb-2">Danger Zone</h2>
-        <p className="text-sm text-gray-600 mb-4">
-          Once you delete your account, there is no going back. All your data will be permanently removed.
-        </p>
-
-        {!showDeleteConfirm ? (
-          <button
-            onClick={() => setShowDeleteConfirm(true)}
-            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
-            Delete Account
-          </button>
-        ) : (
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="deletePassword" className="block text-sm font-medium text-gray-700">
-                Enter your password to confirm
-              </label>
-              <input
-                type="password"
-                id="deletePassword"
-                value={deletePassword}
-                onChange={(e) => setDeletePassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-red-500 focus:border-red-500"
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
               />
             </div>
-            <div className="flex gap-3">
-              <button
-                onClick={handleDeleteAccount}
-                disabled={deleteLoading || !deletePassword}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleteLoading ? 'Deleting...' : 'Confirm Delete'}
-              </button>
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setDeletePassword('');
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
-              >
-                Cancel
-              </button>
+
+            <div className="space-y-2">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                type="text"
+                id="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                minLength={3}
+                maxLength={100}
+              />
             </div>
+
+            <Button type="submit" disabled={profileLoading}>
+              {profileLoading ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Password Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Change Password</CardTitle>
+          <CardDescription>Update your password to keep your account secure</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handlePasswordChange} className="space-y-4">
+            {passwordMessage && (
+              <Alert variant={passwordMessage.type === 'error' ? 'destructive' : 'default'}>
+                <AlertDescription>{passwordMessage.text}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="currentPassword">Current Password</Label>
+              <Input
+                type="password"
+                id="currentPassword"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">New Password</Label>
+              <Input
+                type="password"
+                id="newPassword"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+              <PasswordStrengthIndicator password={newPassword} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm New Password</Label>
+              <Input
+                type="password"
+                id="confirmPassword"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+              />
+            </div>
+
+            <Button type="submit" disabled={passwordLoading}>
+              {passwordLoading ? 'Changing...' : 'Change Password'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Sessions Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle>Active Sessions</CardTitle>
+              <CardDescription>Manage your active login sessions</CardDescription>
+            </div>
+            {sessions.length > 1 && (
+              <Button variant="ghost" size="sm" onClick={handleLogoutAll} className="text-destructive hover:text-destructive">
+                Logout all other sessions
+              </Button>
+            )}
           </div>
-        )}
-      </section>
+        </CardHeader>
+        <CardContent>
+          {sessionsLoading ? (
+            <p className="text-muted-foreground">Loading sessions...</p>
+          ) : sessions.length === 0 ? (
+            <p className="text-muted-foreground">No active sessions</p>
+          ) : (
+            <div className="space-y-3">
+              {sessions.map((session, index) => (
+                <div
+                  key={session.id}
+                  className="flex items-center justify-between p-4 border rounded-lg"
+                >
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">
+                        {parseUserAgent(session.device_info)}
+                      </span>
+                      {index === 0 && (
+                        <Badge variant="secondary" className="bg-emerald-100 text-emerald-800">
+                          Current
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {session.ip_address && <span>{session.ip_address} &middot; </span>}
+                      Last active: {formatDate(session.last_activity)}
+                    </div>
+                  </div>
+                  {index !== 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRevokeSession(session.id)}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      Revoke
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete Account Section */}
+      <Card className="border-destructive/50">
+        <CardHeader>
+          <CardTitle className="text-destructive">Danger Zone</CardTitle>
+          <CardDescription>
+            Once you delete your account, there is no going back. All your data will be permanently removed.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!showDeleteConfirm ? (
+            <Button variant="destructive" onClick={() => setShowDeleteConfirm(true)}>
+              Delete Account
+            </Button>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="deletePassword">Enter your password to confirm</Label>
+                <Input
+                  type="password"
+                  id="deletePassword"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="destructive"
+                  onClick={handleDeleteAccount}
+                  disabled={deleteLoading || !deletePassword}
+                >
+                  {deleteLoading ? 'Deleting...' : 'Confirm Delete'}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeletePassword('');
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

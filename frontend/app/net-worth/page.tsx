@@ -16,6 +16,16 @@ import {
 } from '@/lib/api';
 import { HoldingsSnapshot, NetWorthData, NetWorthByAccountData, AssetClassBreakdown, Position, BrokerageParseResult } from '@/lib/types';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
 export default function NetWorthPage() {
   const [netWorth, setNetWorth] = useState<NetWorthData | null>(null);
   const [netWorthByAccount, setNetWorthByAccount] = useState<NetWorthByAccountData | null>(null);

@@ -6,6 +6,15 @@ import { getRules, createRule, updateRule, deleteRule, toggleRule, getRuleMatchC
 import { Rule, RuleAction, RuleType, RuleListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 const RULE_TYPES: { value: RuleType; label: string; description: string }[] = [
   { value: 'MERCHANT_MATCH', label: 'Merchant Match', description: 'Match by merchant name (case-insensitive contains)' },
   { value: 'DESCRIPTION_REGEX', label: 'Description Regex', description: 'Match by regular expression pattern' },

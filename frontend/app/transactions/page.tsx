@@ -2,10 +2,21 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions, getMerchantTransactionCount, applyMerchantCategory } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 import { formatDate, compareDates } from '@/lib/dateUtils';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export default function TransactionsPage() {
   const searchParams = useSearchParams();
@@ -617,12 +628,12 @@ export default function TransactionsPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Transactions</h1>
+        <h1 className="text-3xl font-bold text-foreground">Transactions</h1>
         <div className="flex items-center gap-3">
-          <button
+          <Button
             onClick={handleExport}
             disabled={exporting}
-            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
+            variant="success"
           >
             {exporting ? (
               <>
@@ -635,11 +646,10 @@ export default function TransactionsPage() {
                 Export CSV
               </>
             )}
-          </button>
-          <button
+          </Button>
+          <Button
             onClick={handleReclassifyAll}
             disabled={reclassifying}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm flex items-center gap-2"
           >
             {reclassifying ? (
               <>
@@ -652,18 +662,18 @@ export default function TransactionsPage() {
                 Re-classify All
               </>
             )}
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Success Message */}
       {reclassifySuccess && (
-        <div className="mb-6 bg-green-50 border-l-4 border-green-500 rounded-lg p-4 shadow-sm">
-          <div className="flex items-start">
-            <span className="text-green-500 text-xl mr-3">✓</span>
-            <p className="text-green-800">{reclassifySuccess}</p>
-          </div>
-        </div>
+        <Alert className="mb-6 border-green-500 bg-green-50">
+          <AlertDescription className="text-green-800 flex items-center gap-2">
+            <span className="text-green-500 text-xl">✓</span>
+            {reclassifySuccess}
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Filters */}
@@ -678,11 +688,11 @@ export default function TransactionsPage() {
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-indigo-100 transition-transform duration-200 ${filtersExpanded ? 'rotate-90' : ''}`}>
                 <span className="text-indigo-600 text-sm font-bold">▶</span>
               </div>
-              <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+              <h2 className="text-lg font-semibold text-foreground">Filters</h2>
               {activeFilters.count > 0 && (
-                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                <Badge variant="secondary" className="bg-indigo-100 text-indigo-700">
                   {activeFilters.count} active
-                </span>
+                </Badge>
               )}
             </div>
             <div className="flex items-center gap-3">
@@ -733,9 +743,9 @@ export default function TransactionsPage() {
           <div className="p-6">
             {/* Quick Date Presets */}
             <div className="mb-6">
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
+              <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 block">
                 Quick Date Range
-              </label>
+              </Label>
               <div className="flex flex-wrap gap-2">
                 {[
                   { value: 'this_month', label: 'This Month' },
@@ -745,13 +755,15 @@ export default function TransactionsPage() {
                   { value: 'this_year', label: 'This Year' },
                   { value: 'last_year', label: 'Last Year' },
                 ].map((preset) => (
-                  <button
+                  <Button
                     key={preset.value}
-                    onClick={() => setDatePreset(preset.value as any)}
-                    className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-indigo-100 hover:text-indigo-700 rounded-lg transition-all"
+                    onClick={() => setDatePreset(preset.value as 'this_month' | 'last_month' | 'last_3_months' | 'last_6_months' | 'this_year' | 'last_year')}
+                    variant="outline"
+                    size="sm"
+                    className="hover:bg-indigo-100 hover:text-indigo-700"
                   >
                     {preset.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -760,12 +772,12 @@ export default function TransactionsPage() {
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
               {/* Date Range Section */}
               <div className="sm:col-span-2 lg:col-span-2">
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Date Range
-                </label>
+                </Label>
                 <div className="flex gap-3">
                   <div className="flex-1">
-                    <input
+                    <Input
                       type="date"
                       id="start-date"
                       value={startDate}
@@ -773,15 +785,14 @@ export default function TransactionsPage() {
                         setStartDate(e.target.value);
                         setPage(1);
                       }}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                       placeholder="Start date"
                     />
                   </div>
-                  <div className="flex items-center text-gray-400">
+                  <div className="flex items-center text-muted-foreground">
                     <span>→</span>
                   </div>
                   <div className="flex-1">
-                    <input
+                    <Input
                       type="date"
                       id="end-date"
                       value={endDate}
@@ -789,7 +800,6 @@ export default function TransactionsPage() {
                         setEndDate(e.target.value);
                         setPage(1);
                       }}
-                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                       placeholder="End date"
                     />
                   </div>
@@ -798,34 +808,37 @@ export default function TransactionsPage() {
 
               {/* Account Filter */}
               <div>
-                <label htmlFor="account-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Account
-                </label>
-                <select
-                  id="account-filter"
-                  value={accountFilter}
-                  onChange={(e) => {
-                    setAccountFilter(e.target.value);
+                </Label>
+                <Select
+                  value={accountFilter || 'all'}
+                  onValueChange={(val) => {
+                    setAccountFilter(val === 'all' ? '' : val);
                     setPage(1);
                   }}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                 >
-                  <option value="">All Accounts</option>
-                  {accounts.map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Accounts" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Accounts</SelectItem>
+                    {accounts.map((account) => (
+                      <SelectItem key={account.id} value={account.id}>
+                        {account.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Description Search */}
               <div>
-                <label htmlFor="description-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Search
-                </label>
+                </Label>
                 <div className="relative">
-                  <input
+                  <Input
                     type="text"
                     id="description-filter"
                     value={descriptionFilter}
@@ -834,9 +847,9 @@ export default function TransactionsPage() {
                       setPage(1);
                     }}
                     placeholder="Search description..."
-                    className="w-full pl-9 pr-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
+                    className="pl-9"
                   />
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
                     🔍
                   </span>
                 </div>
@@ -844,72 +857,81 @@ export default function TransactionsPage() {
 
               {/* Type Filter */}
               <div>
-                <label htmlFor="type-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Type
-                </label>
-                <select
-                  id="type-filter"
-                  value={typeFilter}
-                  onChange={(e) => {
-                    setTypeFilter(e.target.value);
+                </Label>
+                <Select
+                  value={typeFilter || 'all'}
+                  onValueChange={(val) => {
+                    setTypeFilter(val === 'all' ? '' : val);
                     setCategoryFilter('');
                     setPage(1);
                   }}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                 >
-                  <option value="">All Types</option>
-                  {TRANSACTION_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type.charAt(0) + type.slice(1).toLowerCase()}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    {TRANSACTION_TYPES.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type.charAt(0) + type.slice(1).toLowerCase()}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Category Filter */}
               <div>
-                <label htmlFor="category-filter" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Category
-                </label>
-                <select
-                  id="category-filter"
-                  value={categoryFilter}
-                  onChange={(e) => {
-                    setCategoryFilter(e.target.value);
+                </Label>
+                <Select
+                  value={categoryFilter || 'all'}
+                  onValueChange={(val) => {
+                    setCategoryFilter(val === 'all' ? '' : val);
                     setPage(1);
                   }}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                 >
-                  <option value="">All Categories</option>
-                  {getCategoriesForType(typeFilter).map((cat) => (
-                    <option key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All Categories" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Categories</SelectItem>
+                    {getCategoriesForType(typeFilter).map((cat) => (
+                      <SelectItem key={cat.id} value={cat.name}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Group By */}
               <div>
-                <label htmlFor="group-by" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 block">
                   Group By
-                </label>
-                <select
-                  id="group-by"
+                </Label>
+                <Select
                   value={groupBy}
-                  onChange={(e) => {
-                    setGroupBy(e.target.value as GroupBy);
+                  onValueChange={(val) => {
+                    setGroupBy(val as GroupBy);
                     setCollapsedGroups(new Set());
                   }}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-gray-50 hover:bg-white transition-colors"
                 >
-                  <option value="none">No Grouping</option>
-                  <option value="merchant">Merchant</option>
-                  <option value="category">Category</option>
-                  <option value="type">Type</option>
-                  <option value="account">Account</option>
-                  <option value="month">Month</option>
-                </select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="No Grouping" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Grouping</SelectItem>
+                    <SelectItem value="merchant">Merchant</SelectItem>
+                    <SelectItem value="category">Category</SelectItem>
+                    <SelectItem value="type">Type</SelectItem>
+                    <SelectItem value="account">Account</SelectItem>
+                    <SelectItem value="month">Month</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -972,9 +994,9 @@ export default function TransactionsPage() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-          <p className="text-red-800">{error}</p>
-        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* Summary Bar - Moved to top */}
@@ -1014,20 +1036,22 @@ export default function TransactionsPage() {
               {/* Pagination buttons */}
               {total > pageSize && (
                 <div className="flex gap-2">
-                  <button
+                  <Button
                     onClick={() => setPage(page - 1)}
                     disabled={page === 1}
-                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    variant="outline"
+                    size="sm"
                   >
                     Previous
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={() => setPage(page + 1)}
                     disabled={page * pageSize >= total}
-                    className="px-3 py-1 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    variant="outline"
+                    size="sm"
                   >
                     Next
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -1043,18 +1067,21 @@ export default function TransactionsPage() {
               {/* Expand/Collapse All Buttons */}
               {groupBy !== 'none' && (
                 <div className="flex items-center gap-2 border-l border-gray-200 pl-4">
-                  <button
+                  <Button
                     onClick={expandAllGroups}
-                    className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
+                    variant="ghost"
+                    size="sm"
+                    className="text-indigo-600 bg-indigo-50 hover:bg-indigo-100"
                   >
                     Expand All
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     onClick={collapseAllGroups}
-                    className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                    variant="ghost"
+                    size="sm"
                   >
                     Collapse All
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -1070,35 +1097,34 @@ export default function TransactionsPage() {
           </div>
         </div>
       ) : transactions.length === 0 ? (
-        <div className="bg-white shadow rounded-lg p-12">
-          <div className="text-center">
-            <p className="text-gray-500">No transactions found.</p>
-            <a
-              href="/imports"
-              className="mt-4 inline-block text-indigo-600 hover:text-indigo-800"
-            >
-              Import transactions to get started
-            </a>
-          </div>
-        </div>
+        <Card className="p-12 text-center">
+          <CardContent className="p-0">
+            <p className="text-muted-foreground">No transactions found.</p>
+            <Button asChild variant="link" className="mt-4">
+              <Link href="/imports">
+                Import transactions to get started
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <>
           {/* Bulk Actions Bar */}
           {selectedIds.size > 0 && (
-            <div className="bg-indigo-50 border-l-4 border-indigo-500 rounded-lg p-4 mb-4">
+            <Alert className="mb-4 bg-indigo-50 border-l-4 border-indigo-500">
               {!showDeleteConfirm || deleteTarget === 'single' ? (
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between w-full">
                   <div className="flex items-center">
                     <span className="text-indigo-700 font-medium">
                       {selectedIds.size} transaction{selectedIds.size !== 1 ? 's' : ''} selected
                     </span>
                   </div>
-                  <button
+                  <Button
                     onClick={() => handleDeleteClick()}
-                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm"
+                    variant="destructive"
                   >
                     Delete Selected
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1116,27 +1142,27 @@ export default function TransactionsPage() {
                     </div>
                   </div>
                   <div className="flex justify-end gap-3">
-                    <button
+                    <Button
                       onClick={() => {
                         setShowDeleteConfirm(false);
                         setSingleDeleteId(null);
                       }}
                       disabled={deleting}
-                      className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      variant="outline"
                     >
                       Cancel
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       onClick={confirmDelete}
                       disabled={deleting}
-                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium text-sm"
+                      variant="destructive"
                     >
                       {deleting ? 'Deleting...' : `Delete ${selectedIds.size} Transaction${selectedIds.size !== 1 ? 's' : ''}`}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
-            </div>
+            </Alert>
           )}
 
           <div className="bg-white shadow rounded-lg overflow-x-auto">
@@ -1390,83 +1416,83 @@ export default function TransactionsPage() {
       )}
 
       {/* Delete Confirmation Modal (for single transaction delete only) */}
-      {showDeleteConfirm && deleteTarget === 'single' && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={(e) => {
-            // Close modal if clicking on backdrop
-            if (e.target === e.currentTarget && !deleting) {
-              setShowDeleteConfirm(false);
-              setSingleDeleteId(null);
-            }
-          }}
-        >
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Confirm Delete</h3>
-            <p className="text-gray-600 mb-6">
+      <Dialog
+        open={showDeleteConfirm && deleteTarget === 'single'}
+        onOpenChange={(open) => {
+          if (!open && !deleting) {
+            setShowDeleteConfirm(false);
+            setSingleDeleteId(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Delete</DialogTitle>
+            <DialogDescription>
               Are you sure you want to delete this transaction? This action cannot be undone.
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteConfirm(false);
-                  setSingleDeleteId(null);
-                }}
-                disabled={deleting}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDelete}
-                disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-              >
-                {deleting ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={() => {
+                setShowDeleteConfirm(false);
+                setSingleDeleteId(null);
+              }}
+              disabled={deleting}
+              variant="outline"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={confirmDelete}
+              disabled={deleting}
+              variant="destructive"
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Apply Merchant Category Prompt Modal */}
-      {showApplyMerchantPrompt && applyMerchantData && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !applyingMerchant) {
-              closeApplyMerchantPrompt();
-            }
-          }}
-        >
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Apply to Other Transactions?</h3>
-            <p className="text-gray-600 mb-4">
-              Found <span className="font-semibold">{applyMerchantData.otherCount}</span> other transaction{applyMerchantData.otherCount !== 1 ? 's' : ''} from{' '}
-              <span className="font-semibold">{applyMerchantData.merchant}</span>.
-            </p>
-            <p className="text-gray-600 mb-6">
-              Would you like to apply <span className="font-semibold">"{applyMerchantData.category}"</span> to all of them?
-            </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={closeApplyMerchantPrompt}
-                disabled={applyingMerchant}
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                Skip
-              </button>
-              <button
-                onClick={handleApplyMerchantCategory}
-                disabled={applyingMerchant}
-                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
-              >
-                {applyingMerchant ? 'Applying...' : `Apply to ${applyMerchantData.otherCount} Transaction${applyMerchantData.otherCount !== 1 ? 's' : ''}`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Dialog
+        open={showApplyMerchantPrompt && applyMerchantData !== null}
+        onOpenChange={(open) => {
+          if (!open && !applyingMerchant) {
+            closeApplyMerchantPrompt();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply to Other Transactions?</DialogTitle>
+            <DialogDescription>
+              {applyMerchantData && (
+                <>
+                  Found <span className="font-semibold">{applyMerchantData.otherCount}</span> other transaction{applyMerchantData.otherCount !== 1 ? 's' : ''} from{' '}
+                  <span className="font-semibold">{applyMerchantData.merchant}</span>.
+                  Would you like to apply <span className="font-semibold">"{applyMerchantData.category}"</span> to all of them?
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              onClick={closeApplyMerchantPrompt}
+              disabled={applyingMerchant}
+              variant="outline"
+            >
+              Skip
+            </Button>
+            <Button
+              onClick={handleApplyMerchantCategory}
+              disabled={applyingMerchant}
+            >
+              {applyingMerchant ? 'Applying...' : `Apply to ${applyMerchantData?.otherCount || 0} Transaction${(applyMerchantData?.otherCount || 0) !== 1 ? 's' : ''}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

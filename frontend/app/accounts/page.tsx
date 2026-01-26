@@ -4,6 +4,15 @@ import { useState, useEffect } from 'react';
 import { getAccounts, createAccount, updateAccount, deleteAccount } from '@/lib/api';
 import { Account, AccountType } from '@/lib/types';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 // Bank/Transaction account types
 const BANK_ACCOUNT_TYPES: AccountType[] = ['CREDIT_CARD', 'CHECKING', 'SAVINGS', 'OTHER'];
 // Brokerage/Investment account types
@@ -302,27 +311,19 @@ export default function AccountsPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={openCreateModal}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium text-sm flex items-center gap-2 shadow-sm"
-          >
+          <Button onClick={openCreateModal}>
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
             Add Account
-          </button>
+          </Button>
         </div>
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
-            <div className="flex items-center gap-2 text-red-800">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p className="text-sm">{error}</p>
-            </div>
-          </div>
+          <Alert variant="destructive" className="mb-6">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
 
         {/* Loading State */}
@@ -337,19 +338,18 @@ export default function AccountsPage() {
 
         {/* Empty State */}
         {!loading && accounts.length === 0 && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
-            <div className="text-5xl mb-4">🏦</div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No accounts yet</h3>
-            <p className="text-gray-500 text-sm mb-6 max-w-md mx-auto">
-              Create your first account to start importing transactions.
-            </p>
-            <button
-              onClick={openCreateModal}
-              className="px-5 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium text-sm"
-            >
-              Create Account
-            </button>
-          </div>
+          <Card className="p-12 text-center">
+            <CardContent className="p-0">
+              <div className="text-5xl mb-4">🏦</div>
+              <h3 className="text-lg font-semibold text-foreground mb-2">No accounts yet</h3>
+              <p className="text-muted-foreground text-sm mb-6 max-w-md mx-auto">
+                Create your first account to start importing transactions.
+              </p>
+              <Button onClick={openCreateModal}>
+                Create Account
+              </Button>
+            </CardContent>
+          </Card>
         )}
 
         {/* Accounts by Category */}
@@ -393,190 +393,169 @@ export default function AccountsPage() {
         )}
 
         {/* Create/Edit Modal */}
-        {showModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-              <div className="flex items-center justify-between p-5 border-b border-gray-100">
-                <h2 className="text-lg font-bold text-gray-900">
-                  {editingAccount ? 'Edit Account' : 'Create Account'}
-                </h2>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
+        <Dialog open={showModal} onOpenChange={setShowModal}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {editingAccount ? 'Edit Account' : 'Create Account'}
+              </DialogTitle>
+            </DialogHeader>
+
+            <form onSubmit={handleSave} className="space-y-4">
+              {/* Account Name */}
+              <div className="space-y-2">
+                <Label htmlFor="account-name">Account Name *</Label>
+                <Input
+                  type="text"
+                  id="account-name"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="e.g., Amex Platinum Card"
+                  required
+                />
               </div>
 
-              <form onSubmit={handleSave} className="p-5">
-                {/* Account Name */}
-                <div className="mb-4">
-                  <label htmlFor="account-name" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Account Name *
-                  </label>
-                  <input
-                    type="text"
-                    id="account-name"
-                    value={formName}
-                    onChange={(e) => setFormName(e.target.value)}
-                    placeholder="e.g., Amex Platinum Card"
-                    className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    required
-                  />
-                </div>
-
-                {/* Account Type */}
-                <div className="mb-4">
-                  <label htmlFor="account-type" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Account Type *
-                  </label>
-                  {editingAccount ? (
-                    <select
-                      id="account-type"
-                      value={formType}
-                      onChange={(e) => setFormType(e.target.value as AccountType)}
-                      className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      required
-                    >
+              {/* Account Type */}
+              <div className="space-y-2">
+                <Label>Account Type *</Label>
+                {editingAccount ? (
+                  <Select value={formType} onValueChange={(val) => setFormType(val as AccountType)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
                       {(isBrokerageType(editingAccount.account_type) ? BROKERAGE_ACCOUNT_TYPES : BANK_ACCOUNT_TYPES).map((type) => (
-                        <option key={type} value={type}>
+                        <SelectItem key={type} value={type}>
                           {formatAccountType(type)}
-                        </option>
+                        </SelectItem>
                       ))}
-                    </select>
-                  ) : (
-                    <select
-                      id="account-type"
-                      value={formType}
-                      onChange={(e) => setFormType(e.target.value as AccountType)}
-                      className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                      required
-                    >
-                      <optgroup label="Bank & Credit">
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Select value={formType} onValueChange={(val) => setFormType(val as AccountType)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectLabel>Bank & Credit</SelectLabel>
                         {BANK_ACCOUNT_TYPES.map((type) => (
-                          <option key={type} value={type}>
+                          <SelectItem key={type} value={type}>
                             {formatAccountType(type)}
-                          </option>
+                          </SelectItem>
                         ))}
-                      </optgroup>
-                      <optgroup label="Investments">
+                      </SelectGroup>
+                      <SelectGroup>
+                        <SelectLabel>Investments</SelectLabel>
                         {BROKERAGE_ACCOUNT_TYPES.map((type) => (
-                          <option key={type} value={type}>
+                          <SelectItem key={type} value={type}>
                             {formatAccountType(type)}
-                          </option>
+                          </SelectItem>
                         ))}
-                      </optgroup>
-                    </select>
-                  )}
-                </div>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
 
-                {/* Institution */}
-                <div className="mb-4">
-                  <label htmlFor="account-institution" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Institution
-                  </label>
-                  <input
-                    type="text"
-                    id="account-institution"
-                    value={formInstitution}
-                    onChange={(e) => setFormInstitution(e.target.value)}
-                    placeholder="e.g., American Express"
-                    className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
+              {/* Institution */}
+              <div className="space-y-2">
+                <Label htmlFor="account-institution">Institution</Label>
+                <Input
+                  type="text"
+                  id="account-institution"
+                  value={formInstitution}
+                  onChange={(e) => setFormInstitution(e.target.value)}
+                  placeholder="e.g., American Express"
+                />
+              </div>
 
-                {/* Last 4 Digits */}
-                <div className="mb-6">
-                  <label htmlFor="account-last4" className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Last 4 Digits
-                  </label>
-                  <input
-                    type="text"
-                    id="account-last4"
-                    value={formLast4}
-                    onChange={(e) => setFormLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    placeholder="e.g., 1007"
-                    maxLength={4}
-                    className="block w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                  />
-                </div>
+              {/* Last 4 Digits */}
+              <div className="space-y-2">
+                <Label htmlFor="account-last4">Last 4 Digits</Label>
+                <Input
+                  type="text"
+                  id="account-last4"
+                  value={formLast4}
+                  onChange={(e) => setFormLast4(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  placeholder="e.g., 1007"
+                  maxLength={4}
+                />
+              </div>
 
-                {/* Buttons */}
-                <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setShowModal(false)}
-                    className="flex-1 py-2 px-4 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving || !formName.trim()}
-                    className="flex-1 py-2 px-4 rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                  >
-                    {saving ? 'Saving...' : (editingAccount ? 'Save Changes' : 'Create')}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+              {/* Buttons */}
+              <DialogFooter>
+                <Button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  variant="outline"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={saving || !formName.trim()}
+                >
+                  {saving ? 'Saving...' : (editingAccount ? 'Save Changes' : 'Create')}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
 
         {/* Delete Confirmation Modal */}
-        {showDeleteConfirm && accountToDelete && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-              <div className="p-5 text-center">
-                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
+        <Dialog open={showDeleteConfirm && accountToDelete !== null} onOpenChange={(open) => !open && setShowDeleteConfirm(false)}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader className="text-center">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <DialogTitle>Remove Account</DialogTitle>
+              <DialogDescription>
+                What would you like to do with <strong className="text-foreground">{accountToDelete?.name}</strong>?
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2">
+              <Button
+                onClick={() => handleDelete(false)}
+                disabled={deleting}
+                variant="outline"
+                className="w-full justify-start border-amber-200 bg-amber-50 hover:bg-amber-100"
+              >
+                <span className="text-xl mr-3">😴</span>
+                <div className="text-left">
+                  <p className="font-medium text-sm">Deactivate</p>
+                  <p className="text-xs text-muted-foreground">Hide but keep data</p>
                 </div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">Remove Account</h3>
-                <p className="text-sm text-gray-500 mb-5">
-                  What would you like to do with <strong className="text-gray-700">{accountToDelete.name}</strong>?
-                </p>
-              </div>
+              </Button>
 
-              <div className="px-5 pb-5 space-y-2">
-                <button
-                  onClick={() => handleDelete(false)}
-                  disabled={deleting}
-                  className="w-full py-2.5 px-4 border border-amber-200 bg-amber-50 rounded-lg text-left hover:bg-amber-100 disabled:opacity-50 transition-colors flex items-center gap-3"
-                >
-                  <span className="text-xl">😴</span>
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">Deactivate</p>
-                    <p className="text-xs text-gray-500">Hide but keep data</p>
-                  </div>
-                </button>
+              <Button
+                onClick={() => handleDelete(true)}
+                disabled={deleting}
+                variant="outline"
+                className="w-full justify-start border-red-200 bg-red-50 hover:bg-red-100"
+              >
+                <span className="text-xl mr-3">🗑️</span>
+                <div className="text-left">
+                  <p className="font-medium text-red-600 text-sm">Delete Permanently</p>
+                  <p className="text-xs text-muted-foreground">Remove all data</p>
+                </div>
+              </Button>
 
-                <button
-                  onClick={() => handleDelete(true)}
-                  disabled={deleting}
-                  className="w-full py-2.5 px-4 border border-red-200 bg-red-50 rounded-lg text-left hover:bg-red-100 disabled:opacity-50 transition-colors flex items-center gap-3"
-                >
-                  <span className="text-xl">🗑️</span>
-                  <div>
-                    <p className="font-medium text-red-600 text-sm">Delete Permanently</p>
-                    <p className="text-xs text-gray-500">Remove all data</p>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  disabled={deleting}
-                  className="w-full py-2 px-4 text-sm font-medium text-gray-600 hover:text-gray-800 transition-colors mt-2"
-                >
-                  {deleting ? 'Processing...' : 'Cancel'}
-                </button>
-              </div>
+              <Button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                variant="ghost"
+                className="w-full"
+              >
+                {deleting ? 'Processing...' : 'Cancel'}
+              </Button>
             </div>
-          </div>
-        )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

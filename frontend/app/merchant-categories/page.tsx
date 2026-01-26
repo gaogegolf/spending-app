@@ -4,6 +4,14 @@ import { useEffect, useState } from 'react';
 import { getMerchantCategories, updateMerchantCategory, deleteMerchantCategory, bulkDeleteMerchantCategories, refreshMerchantCounts } from '@/lib/api';
 import { MerchantCategory, MerchantCategoryListResponse } from '@/lib/types';
 
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
 // Empower-style categories (same as transactions page)
 const CATEGORIES = [
   'Restaurants',
