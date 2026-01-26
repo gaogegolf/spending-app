@@ -83,7 +83,7 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 ### Backend
 ```bash
 cd backend
-python -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # Add ANTHROPIC_API_KEY
 alembic upgrade head
@@ -98,6 +98,56 @@ npm install
 npm run dev
 ```
 Frontend: http://localhost:3001
+
+### Troubleshooting
+
+**Virtual environment not working (bad interpreter error)**
+
+If you cloned the repo and the venv was created on a different machine, you'll see an error like:
+```
+bad interpreter: /old/path/to/python: no such file or directory
+```
+Fix by recreating the virtual environment:
+```bash
+cd backend
+rm -rf venv
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**npm install fails with E401/authentication error**
+
+If npm install fails with password or authentication errors, try specifying the public registry:
+```bash
+npm install --registry https://registry.npmjs.org/
+```
+
+**Running services with absolute paths**
+
+If you prefer to run the services without activating the virtual environment:
+```bash
+# Backend (from project root)
+./backend/venv/bin/uvicorn app.main:app --reload --app-dir ./backend
+
+# Frontend (from frontend directory)
+./node_modules/.bin/next dev -p 3001
+```
+
+**Missing email-validator or bcrypt errors**
+
+If you see errors about missing `email-validator` or bcrypt version issues:
+```bash
+pip install email-validator 'bcrypt<4.1'
+```
+
+**Default login credentials**
+
+After running migrations, a default user is created:
+- Email: `default@example.com`
+- Password: `changeme123`
+
+You should change the password or create a new account after first login.
 
 ## API Endpoints
 

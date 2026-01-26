@@ -41,7 +41,7 @@ def upgrade() -> None:
     # Insert default user for existing data migration
     # Using a placeholder password hash (users should reset password)
     # This is bcrypt hash for "changeme123"
-    default_password_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiAYMyzJ/mGe"
+    default_password_hash = "$2b$12$DKd1/SPB6SMxgVCTHP2oeOGJ40I9sFUV1hqMqxusOX0owuxI7cbkK"
 
     op.execute(f"""
         INSERT INTO users (id, email, username, hashed_password, is_active, is_verified)
