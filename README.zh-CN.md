@@ -58,7 +58,7 @@
 ### 后端
 ```bash
 cd backend
-python -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # 添加 ANTHROPIC_API_KEY
 alembic upgrade head
@@ -73,6 +73,56 @@ npm install
 npm run dev
 ```
 前端地址: http://localhost:3001
+
+### 故障排除
+
+**虚拟环境无法工作（bad interpreter 错误）**
+
+如果克隆的仓库中 venv 是在其他机器上创建的，会看到类似错误：
+```
+bad interpreter: /old/path/to/python: no such file or directory
+```
+解决方法 - 重新创建虚拟环境：
+```bash
+cd backend
+rm -rf venv
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+**npm install 出现 E401/认证错误**
+
+如果 npm install 出现密码或认证错误，尝试指定公共仓库：
+```bash
+npm install --registry https://registry.npmjs.org/
+```
+
+**使用绝对路径运行服务**
+
+如果不想激活虚拟环境，可以使用绝对路径运行：
+```bash
+# 后端（从项目根目录）
+./backend/venv/bin/uvicorn app.main:app --reload --app-dir ./backend
+
+# 前端（从 frontend 目录）
+./node_modules/.bin/next dev -p 3001
+```
+
+**缺少 email-validator 或 bcrypt 错误**
+
+如果看到关于缺少 `email-validator` 或 bcrypt 版本问题的错误：
+```bash
+pip install email-validator 'bcrypt<4.1'
+```
+
+**默认登录凭据**
+
+运行数据库迁移后，会创建一个默认用户：
+- 邮箱: `default@example.com`
+- 密码: `changeme123`
+
+首次登录后建议修改密码或创建新账户。
 
 ## API文档
 
