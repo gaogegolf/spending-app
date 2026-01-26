@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.config import settings
 from app.models.user import User
+from app.models.session import Session as SessionModel
 from app.services.auth_service import AuthService
 from app.middleware.auth import get_current_active_user
 from app.schemas.user import (
@@ -420,7 +421,10 @@ def delete_account(
             detail="Incorrect password"
         )
 
-    # Delete user (cascade will handle related data)
+    # Delete user's sessions first (explicit delete to avoid cascade issues)
+    db.query(SessionModel).filter(SessionModel.user_id == current_user.id).delete()
+
+    # Delete user
     db.delete(current_user)
     db.commit()
 
