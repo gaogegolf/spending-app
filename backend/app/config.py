@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Feature Flags
     ENABLE_PDF_PARSING: bool = True
     ENABLE_LLM_CLASSIFICATION: bool = True
+    ENABLE_LLM_PDF_EXTRACTION: bool = True  # Enable Claude Vision fallback for unknown PDF formats
+    ENABLE_FX_CONVERSION: bool = True
+
+    # FX Rate API (using Frankfurter - free, no API key required)
+    FX_RATE_API_URL: str = "https://api.frankfurter.app"
 
     # Environment
     ENVIRONMENT: str = "development"

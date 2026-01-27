@@ -30,6 +30,27 @@ class PDFParser(BaseParser):
         self.statement_year = None  # Extract from PDF header
         self.statement_format = None  # 'fidelity', 'amex', or 'unknown'
 
+    def _get_institution_info(self, format_name: str) -> Tuple[Optional[str], Optional[str]]:
+        """Map internal format name to display institution name and account type.
+
+        Args:
+            format_name: Internal format name from _detect_statement_format()
+
+        Returns:
+            Tuple of (institution_display_name, account_type)
+        """
+        format_mapping = {
+            'chase': ('Chase', 'CREDIT_CARD'),
+            'chasebank': ('Chase', 'CHECKING'),
+            'amex': ('American Express', 'CREDIT_CARD'),
+            'wellsfargo': ('Wells Fargo', 'CREDIT_CARD'),
+            'capitalone': ('Capital One', 'CREDIT_CARD'),
+            'fidelity': ('Fidelity', 'CREDIT_CARD'),
+            'allybank': ('Ally Bank', 'CHECKING'),
+            'boa': ('Bank of America', 'CREDIT_CARD'),
+        }
+        return format_mapping.get(format_name, (None, None))
+
     def parse(self) -> ParseResult:
         """Parse PDF file and return transactions."""
         errors = []
@@ -64,9 +85,19 @@ class PDFParser(BaseParser):
             if self.statement_format == 'chasebank':
                 return self._parse_chasebank_statement()
 
+            if self.statement_format == 'boa':
+                return self._parse_boa_statement()
+
             # Default: Try Fidelity format
             # Extract all tables from all pages
             self.tables = self.extract_tables()
+
+            # Get institution info based on detected format
+            institution, account_type = self._get_institution_info(self.statement_format or 'unknown')
+
+            # Try to detect institution from text if not already known
+            if not institution:
+                institution = self._detect_institution_from_text()
 
             # If table extraction fails, try text extraction fallback
             if not self.tables:
@@ -74,13 +105,20 @@ class PDFParser(BaseParser):
                 transactions = self._extract_text_fallback()
 
                 if not transactions:
+                    # Try LLM extraction if enabled
+                    llm_result = self._try_llm_extraction()
+                    if llm_result:
+                        return llm_result
+
                     return ParseResult(
                         success=False,
                         transactions=[],
                         errors=["Unable to parse this PDF format. Different banks use different PDF layouts.",
                                 "For best results, please download CSV from your bank's online portal."],
                         warnings=warnings,
-                        metadata={}
+                        metadata={},
+                        detected_institution=institution,
+                        detected_account_type=account_type
                     )
 
                 return ParseResult(
@@ -92,7 +130,9 @@ class PDFParser(BaseParser):
                         'total_transactions': len(transactions),
                         'source': 'pdf',
                         'format': 'text_extraction',
-                    }
+                    },
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             # Identify transaction tables (Fidelity has two: Credits and Debits)
@@ -104,6 +144,11 @@ class PDFParser(BaseParser):
                 transactions = self._extract_text_fallback()
 
                 if not transactions:
+                    # Try LLM extraction if enabled
+                    llm_result = self._try_llm_extraction()
+                    if llm_result:
+                        return llm_result
+
                     return ParseResult(
                         success=False,
                         transactions=[],
@@ -112,7 +157,9 @@ class PDFParser(BaseParser):
                             "For best results, please download CSV from your bank's online portal."
                         ],
                         warnings=warnings,
-                        metadata={'tables_found': len(self.tables)}
+                        metadata={'tables_found': len(self.tables)},
+                        detected_institution=institution,
+                        detected_account_type=account_type
                     )
 
                 return ParseResult(
@@ -124,11 +171,16 @@ class PDFParser(BaseParser):
                         'total_transactions': len(transactions),
                         'source': 'pdf',
                         'format': 'text_extraction',
-                    }
+                    },
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             # Merge credit and debit tables
             merged_df = self._merge_credit_debit_tables(credit_table, debit_table)
+
+            # For Fidelity, use 'fidelity' as the format
+            fidelity_institution, fidelity_account_type = self._get_institution_info('fidelity')
 
             if merged_df is None or len(merged_df) == 0:
                 return ParseResult(
@@ -136,7 +188,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in PDF tables"],
                     warnings=[],
-                    metadata={}
+                    metadata={},
+                    detected_institution=fidelity_institution,
+                    detected_account_type=fidelity_account_type
                 )
 
             # Convert to transactions
@@ -151,17 +205,22 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'fidelity_two_table',
-                }
+                },
+                detected_institution=fidelity_institution,
+                detected_account_type=fidelity_account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info(self.statement_format or 'unknown')
             errors.append(f"Failed to parse PDF: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=["Consider using CSV format for more reliable parsing."],
-                metadata={}
+                metadata={},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
         finally:
             if self.pdf:
@@ -263,6 +322,19 @@ class PDFParser(BaseParser):
             if any(indicator in first_page_text for indicator in amex_indicators):
                 return 'amex'
 
+            # Check for Bank of America indicators
+            boa_indicators = [
+                'BANK OF AMERICA',
+                'Bank of America',
+                'bankofamerica.com',
+                'Unlimited Cash Rewards',
+                'Cash Rewards Credit Card',
+                'BankAmericard',
+            ]
+
+            if any(indicator in first_page_text for indicator in boa_indicators):
+                return 'boa'
+
             # Check for Fidelity indicators
             fidelity_indicators = [
                 'Fidelity',
@@ -305,13 +377,17 @@ class PDFParser(BaseParser):
             # Parse transactions from text
             transactions = self._extract_amex_transactions(all_text)
 
+            institution, account_type = self._get_institution_info('amex')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in American Express statement"],
                     warnings=warnings,
-                    metadata={'format': 'amex'}
+                    metadata={'format': 'amex'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             return ParseResult(
@@ -323,17 +399,22 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'amex',
-                }
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info('amex')
             errors.append(f"Failed to parse Amex statement: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'amex'}
+                metadata={'format': 'amex'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_amex_transactions(self, text: str) -> List[Dict[str, Any]]:
@@ -607,8 +688,21 @@ class PDFParser(BaseParser):
                 if text:
                     all_text += text + "\n"
 
+            # Extract account last 4 digits from various formats:
+            # - "Account Number: XXXX XXXX XXXX 7340" (Chase)
+            # - "Card Ending 7340" or "Account Ending in 7340" (other banks)
+            account_last4 = None
+            # Try "Account Number: XXXX XXXX XXXX 7340" format first
+            last4_match = re.search(r'Account\s+(?:Number|#)[:\s]+(?:X+\s+)*(\d{4})\b', all_text, re.IGNORECASE)
+            if not last4_match:
+                # Try "Card/Account Ending" format
+                last4_match = re.search(r'(?:Card|Account)\s+Ending\s+(?:in\s+)?(\d{4})', all_text, re.IGNORECASE)
+            if last4_match:
+                account_last4 = last4_match.group(1)
+
             # Parse transactions from text
             transactions = self._extract_chase_transactions(all_text)
+            institution, account_type = self._get_institution_info('chase')
 
             if not transactions:
                 return ParseResult(
@@ -616,7 +710,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Chase statement"],
                     warnings=warnings,
-                    metadata={'format': 'chase'}
+                    metadata={'format': 'chase', 'account_last4': account_last4},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             return ParseResult(
@@ -628,17 +724,23 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'chase',
-                }
+                    'account_last4': account_last4,
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info('chase')
             errors.append(f"Failed to parse Chase statement: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'chase'}
+                metadata={'format': 'chase'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_chase_transactions(self, text: str) -> List[Dict[str, Any]]:
@@ -894,6 +996,7 @@ class PDFParser(BaseParser):
 
             # Parse transactions from text
             transactions = self._extract_wellsfargo_transactions(all_text)
+            institution, account_type = self._get_institution_info('wellsfargo')
 
             if not transactions:
                 return ParseResult(
@@ -901,7 +1004,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Wells Fargo statement"],
                     warnings=warnings,
-                    metadata={'format': 'wellsfargo'}
+                    metadata={'format': 'wellsfargo'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             return ParseResult(
@@ -913,17 +1018,22 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'wellsfargo',
-                }
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info('wellsfargo')
             errors.append(f"Failed to parse Wells Fargo statement: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'wellsfargo'}
+                metadata={'format': 'wellsfargo'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_wellsfargo_transactions(self, text: str) -> List[Dict[str, Any]]:
@@ -1215,6 +1325,7 @@ class PDFParser(BaseParser):
 
             # Parse transactions from text
             transactions = self._extract_capitalone_transactions(all_text)
+            institution, account_type = self._get_institution_info('capitalone')
 
             if not transactions:
                 return ParseResult(
@@ -1222,7 +1333,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Capital One statement"],
                     warnings=warnings,
-                    metadata={'format': 'capitalone'}
+                    metadata={'format': 'capitalone'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             return ParseResult(
@@ -1234,17 +1347,22 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'capitalone',
-                }
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info('capitalone')
             errors.append(f"Failed to parse Capital One statement: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'capitalone'}
+                metadata={'format': 'capitalone'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_capitalone_transactions(self, text: str) -> List[Dict[str, Any]]:
@@ -1490,6 +1608,240 @@ class PDFParser(BaseParser):
 
         return cleaned.strip()
 
+    def _parse_boa_statement(self) -> ParseResult:
+        """Parse Bank of America credit card statement.
+
+        BOA statements have text-based transaction format:
+        - Trans Date Post Date Description Amount
+        - Payments have negative amounts
+        - Purchases have positive amounts
+
+        Returns:
+            ParseResult with transactions
+        """
+        errors = []
+        warnings = []
+        transactions = []
+
+        try:
+            # Extract all text from all pages
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Extract account last 4 digits from "Account# XXXX XXXX XXXX 4537" or "Account Number: XXXX XXXX XXXX 4537"
+            account_last4 = None
+            # BOA shows full account number: "Account# 4400 6682 7249 4537"
+            last4_match = re.search(r'Account[#\s]+(?:Number[:\s]+)?(?:\d{4}\s+){3}(\d{4})', all_text)
+            if last4_match:
+                account_last4 = last4_match.group(1)
+
+            # Parse transactions from text
+            transactions = self._extract_boa_transactions(all_text)
+            institution, account_type = self._get_institution_info('boa')
+
+            if not transactions:
+                return ParseResult(
+                    success=False,
+                    transactions=[],
+                    errors=["No transactions found in Bank of America statement"],
+                    warnings=warnings,
+                    metadata={'format': 'boa', 'account_last4': account_last4},
+                    detected_institution=institution,
+                    detected_account_type=account_type
+                )
+
+            return ParseResult(
+                success=True,
+                transactions=transactions,
+                errors=errors,
+                warnings=warnings,
+                metadata={
+                    'total_transactions': len(transactions),
+                    'source': 'pdf',
+                    'format': 'boa',
+                    'account_last4': account_last4,
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
+            )
+
+        except Exception as e:
+            institution, account_type = self._get_institution_info('boa')
+            errors.append(f"Failed to parse Bank of America statement: {str(e)}")
+            return ParseResult(
+                success=False,
+                transactions=[],
+                errors=errors,
+                warnings=warnings,
+                metadata={'format': 'boa'},
+                detected_institution=institution,
+                detected_account_type=account_type
+            )
+
+    def _extract_boa_transactions(self, text: str) -> List[Dict[str, Any]]:
+        """Extract transactions from Bank of America statement text.
+
+        BOA transaction format:
+        - Trans Date Post Date Description Amount
+        - Date format: MM/DD (e.g., "10/11")
+        - Payments/Credits: negative amounts (e.g., -32.81)
+        - Purchases: positive amounts (e.g., 968.48)
+
+        Example lines:
+        10/11 10/13 PAYPAL *HARRODS 402-935-7733 NY 2783 4537 968.48
+        04/08 04/10 BA ELECTRONIC PAYMENT 9033 4537 -32.81
+
+        Args:
+            text: Full text of the BOA statement
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        lines = text.split('\n')
+        row_index = 0
+        in_transaction_section = False
+
+        # Pattern for BOA transactions: MM/DD MM/DD Description Amount
+        # Amount can be positive or negative
+        transaction_pattern = r'^(\d{2}/\d{2})\s+(\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})$'
+
+        for line in lines:
+            line = line.strip()
+
+            # Detect start of transaction sections
+            if 'Payments and Other Credits' in line or 'Purchases and Adjustments' in line:
+                in_transaction_section = True
+                continue
+
+            # Skip interest charge lines but don't leave transaction section
+            if 'INTEREST CHARGED' in line.upper():
+                continue
+
+            # End of transaction section markers
+            if any(marker in line for marker in [
+                'Interest Charge Calculation',
+                'Your Annual Percentage Rate',
+                'Balance Type',
+            ]):
+                in_transaction_section = False
+                continue
+
+            if not in_transaction_section:
+                continue
+
+            # Skip empty lines and non-transaction content
+            if not line:
+                continue
+
+            # Try to match transaction pattern
+            match = re.match(transaction_pattern, line)
+            if match:
+                trans_date_str = match.group(1)
+                post_date_str = match.group(2)
+                description = match.group(3).strip()
+                amount_str = match.group(4)
+
+                txn = self._parse_boa_transaction_line(
+                    trans_date_str,
+                    post_date_str,
+                    description,
+                    amount_str
+                )
+
+                if txn:
+                    txn['row_index'] = row_index
+                    row_index += 1
+                    transactions.append(txn)
+
+        return transactions
+
+    def _parse_boa_transaction_line(self, trans_date_str: str, post_date_str: str,
+                                     description: str, amount_str: str) -> Optional[Dict[str, Any]]:
+        """Parse a single BOA transaction line.
+
+        Args:
+            trans_date_str: Transaction date in MM/DD format
+            post_date_str: Post date in MM/DD format
+            description: Transaction description
+            amount_str: Amount string (negative for credits/payments)
+
+        Returns:
+            Transaction dictionary or None if parsing fails
+        """
+        try:
+            # Parse date (MM/DD format - need to add year)
+            month, day = map(int, trans_date_str.split('/'))
+            year = self.statement_year if self.statement_year else datetime.now().year
+
+            # Handle year boundary
+            if month >= 10 and self._get_statement_month() <= 3:
+                year -= 1
+
+            try:
+                parsed_date = datetime(year, month, day).date()
+            except ValueError:
+                return None
+
+            # Parse amount
+            amount = float(amount_str.replace(',', ''))
+
+            # Clean merchant description
+            cleaned_merchant = self._clean_boa_merchant(description)
+
+            # Determine if this is a payment (transfer)
+            is_payment = any(kw in description.upper() for kw in [
+                'ELECTRONIC PAYMENT', 'AUTOPAY', 'PAYMENT THANK YOU'
+            ])
+
+            return {
+                'date': parsed_date.isoformat(),
+                'description_raw': description,
+                'merchant_normalized': cleaned_merchant,
+                'amount': abs(amount),  # Store as positive, use is_credit for direction
+                'currency': 'USD',
+                'is_credit': amount < 0,
+                'is_payment': is_payment,
+            }
+
+        except Exception:
+            return None
+
+    def _clean_boa_merchant(self, description: str) -> str:
+        """Clean BOA merchant description to a normalized form.
+
+        Args:
+            description: Raw transaction description
+
+        Returns:
+            Cleaned merchant name
+        """
+        cleaned = description
+
+        # Remove last 4 digits of card number that BOA appends (e.g., "2783 4537")
+        cleaned = re.sub(r'\s+\d{4}\s+\d{4}$', '', cleaned)
+
+        # Remove phone numbers
+        cleaned = re.sub(r'\s*\d{3}[-.]?\d{3}[-.]?\d{4}\s*', ' ', cleaned)
+
+        # Remove state codes at the end
+        cleaned = re.sub(r'\s+[A-Z]{2}$', '', cleaned)
+
+        # Remove common prefixes
+        prefixes_to_remove = ['BA ', 'PAYPAL *', 'SQ *', 'TST* ', 'SP ']
+        for prefix in prefixes_to_remove:
+            if cleaned.upper().startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+
+        # Title case for cleaner display
+        if cleaned.isupper() and len(cleaned) > 2:
+            cleaned = cleaned.title()
+
+        return cleaned.strip()
+
     def _parse_allybank_statement(self) -> ParseResult:
         """Parse Ally Bank statement.
 
@@ -1515,6 +1867,7 @@ class PDFParser(BaseParser):
 
             # Parse transactions from text
             transactions = self._extract_allybank_transactions(all_text)
+            institution, account_type = self._get_institution_info('allybank')
 
             if not transactions:
                 return ParseResult(
@@ -1522,7 +1875,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Ally Bank statement"],
                     warnings=warnings,
-                    metadata={'format': 'allybank'}
+                    metadata={'format': 'allybank'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             # Extract balances and statement date for net worth tracking
@@ -1540,17 +1895,22 @@ class PDFParser(BaseParser):
                     'format': 'allybank',
                     'balances': balances,
                     'statement_date': statement_date,
-                }
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
+            institution, account_type = self._get_institution_info('allybank')
             errors.append(f"Failed to parse Ally Bank statement: {str(e)}")
             return ParseResult(
                 success=False,
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'allybank'}
+                metadata={'format': 'allybank'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_allybank_transactions(self, text: str) -> List[Dict[str, Any]]:
@@ -1933,6 +2293,8 @@ class PDFParser(BaseParser):
         - Format: MM/DD Description Amount Balance
         - Statement period in header (e.g., "November 26, 2025throughDecember 22, 2025")
         """
+        institution, account_type = self._get_institution_info('chasebank')
+
         try:
             if not self.pdf:
                 return ParseResult(
@@ -1940,7 +2302,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["Failed to open PDF"],
                     warnings=[],
-                    metadata={'format': 'chasebank'}
+                    metadata={'format': 'chasebank'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             # Extract all text from all pages
@@ -1956,7 +2320,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No text extracted from Chase Bank statement"],
                     warnings=[],
-                    metadata={'format': 'chasebank'}
+                    metadata={'format': 'chasebank'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             # Extract statement year and date from header
@@ -1975,7 +2341,9 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Chase Bank statement"],
                     warnings=[],
-                    metadata={'format': 'chasebank'}
+                    metadata={'format': 'chasebank'},
+                    detected_institution=institution,
+                    detected_account_type=account_type
                 )
 
             return ParseResult(
@@ -1989,7 +2357,9 @@ class PDFParser(BaseParser):
                     'statement_year': statement_year,
                     'statement_date': statement_date,
                     'balances': balances,
-                }
+                },
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
         except Exception as e:
@@ -1998,7 +2368,9 @@ class PDFParser(BaseParser):
                 transactions=[],
                 errors=[f"Failed to parse Chase Bank statement: {str(e)}"],
                 warnings=[],
-                metadata={'format': 'chasebank'}
+                metadata={'format': 'chasebank'},
+                detected_institution=institution,
+                detected_account_type=account_type
             )
 
     def _extract_chasebank_year(self, text: str) -> int:
@@ -2399,8 +2771,255 @@ class PDFParser(BaseParser):
 
         return all_tables
 
+    def _try_llm_extraction(self) -> Optional[ParseResult]:
+        """Try to extract transactions using LLM (Claude Vision).
+
+        This is a fallback when all other extraction methods fail.
+        Only attempted if ENABLE_LLM_PDF_EXTRACTION is True.
+
+        Returns:
+            ParseResult if LLM extraction succeeds, None otherwise
+        """
+        from app.config import settings
+
+        if not settings.ENABLE_LLM_PDF_EXTRACTION:
+            return None
+
+        if not settings.ANTHROPIC_API_KEY:
+            return None
+
+        try:
+            from app.services.file_parser.llm_pdf_extractor import LLMPDFExtractor
+
+            extractor = LLMPDFExtractor()
+            result = extractor.extract(self.file_path)
+
+            if result.success:
+                # Add a warning that LLM extraction was used
+                result.warnings.append("Used AI-powered extraction for unknown PDF format. Please review transactions for accuracy.")
+
+            return result
+
+        except Exception as e:
+            print(f"LLM extraction failed: {str(e)}")
+            return None
+
     def _extract_text_fallback(self) -> List[Dict[str, Any]]:
         """Extract transactions using text-based parsing (fallback when table extraction fails).
+
+        This method tries multiple approaches:
+        1. Generic multi-bank pattern matching
+        2. Fidelity-specific parsing (for Fidelity statements)
+
+        Returns:
+            List of transaction dictionaries
+        """
+        # First, try generic pattern extraction (works for many banks)
+        transactions = self._extract_generic_text()
+        if transactions:
+            return transactions
+
+        # Fall back to Fidelity-specific extraction
+        return self._extract_fidelity_text_fallback()
+
+    def _detect_institution_from_text(self) -> Optional[str]:
+        """Try to identify institution from PDF text content.
+
+        Returns:
+            Institution name or None if not detected
+        """
+        try:
+            all_text = ""
+            for page in self.pdf.pages[:3]:  # Check first 3 pages
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            all_text_upper = all_text.upper()
+
+            institution_patterns = {
+                'Chase': ['CHASE.COM', 'JPMORGAN CHASE', 'CHASE CREDIT CARDS', 'CHASE MOBILE'],
+                'Bank of America': ['BANKOFAMERICA.COM', 'BANK OF AMERICA'],
+                'Wells Fargo': ['WELLSFARGO.COM', 'WELLS FARGO'],
+                'Citi': ['CITI.COM', 'CITIBANK', 'CITI CREDIT CARDS'],
+                'US Bank': ['USBANK.COM', 'U.S. BANK', 'US BANK'],
+                'Capital One': ['CAPITALONE.COM', 'CAPITAL ONE'],
+                'American Express': ['AMERICANEXPRESS.COM', 'AMERICAN EXPRESS', 'AMEX'],
+                'Discover': ['DISCOVER.COM', 'DISCOVER CARD', 'DISCOVER BANK'],
+                'PNC': ['PNC.COM', 'PNC BANK'],
+                'TD Bank': ['TD.COM', 'TD BANK'],
+                'Ally Bank': ['ALLY.COM', 'ALLY BANK'],
+                'Navy Federal': ['NAVYFEDERAL.ORG', 'NAVY FEDERAL'],
+                'USAA': ['USAA.COM', 'USAA BANK'],
+                'Fidelity': ['FIDELITY.COM', 'FIDELITY INVESTMENTS', 'FIDELITY REWARDS'],
+                'Charles Schwab': ['SCHWAB.COM', 'CHARLES SCHWAB'],
+                'Synchrony': ['SYNCHRONY.COM', 'SYNCHRONY BANK'],
+                'Barclays': ['BARCLAYS.COM', 'BARCLAY', 'BARCLAYCARD'],
+            }
+
+            for institution, keywords in institution_patterns.items():
+                if any(kw in all_text_upper for kw in keywords):
+                    return institution
+
+            return None
+
+        except Exception:
+            return None
+
+    def _extract_generic_text(self) -> List[Dict[str, Any]]:
+        """Extract transactions using generic patterns that work across multiple banks.
+
+        Returns:
+            List of transaction dictionaries
+        """
+        transactions = []
+        row_index = 0
+
+        # Common transaction line patterns across different banks
+        # Each pattern: (regex, date_group, desc_group, amount_group, optional_credit_indicator_group)
+        patterns = [
+            # MM/DD Description Amount (Chase credit card style)
+            (r'^(\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+            # MM/DD/YYYY Description Amount
+            (r'^(\d{2}/\d{2}/\d{4})\s+(.+?)\s+(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+            # MM/DD/YY Description Amount
+            (r'^(\d{2}/\d{2}/\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+            # Date Description $Amount (with dollar sign)
+            (r'^(\d{2}/\d{2}(?:/\d{2,4})?)\s+(.+?)\s+\$?([\d,]+\.\d{2})\s*(CR)?$', 1, 2, 3, 4),
+            # Month DD Description Amount (Capital One style: "Jan 15 MERCHANT 123.45")
+            (r'^([A-Z][a-z]{2}\s+\d{1,2})\s+(.+?)\s+\$?([\d,]+\.\d{2})$', 1, 2, 3, None),
+            # YYYY-MM-DD Description Amount (ISO format)
+            (r'^(\d{4}-\d{2}-\d{2})\s+(.+?)\s+(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+            # MM-DD-YYYY Description Amount (dash separated)
+            (r'^(\d{2}-\d{2}-\d{4})\s+(.+?)\s+(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+            # Description on one side, amount on other with date: "01/15 STARBUCKS 5.45"
+            (r'^(\d{2}/\d{2})\s+(\S.+?)\s{2,}(-?[\d,]+\.\d{2})$', 1, 2, 3, None),
+        ]
+
+        try:
+            # Get all text from PDF
+            all_text = ""
+            for page in self.pdf.pages:
+                text = page.extract_text()
+                if text:
+                    all_text += text + "\n"
+
+            # Try to detect the institution for better context
+            detected_institution = self._detect_institution_from_text()
+
+            # Process each line
+            for line in all_text.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Skip obvious non-transaction lines
+                skip_keywords = [
+                    'STATEMENT', 'ACCOUNT', 'PAGE', 'BALANCE', 'TOTAL',
+                    'OPENING', 'CLOSING', 'PREVIOUS', 'NEW BALANCE',
+                    'PAYMENT DUE', 'MINIMUM', 'CREDIT LIMIT', 'AVAILABLE',
+                    'APR', 'INTEREST RATE', 'CUSTOMER SERVICE', 'QUESTIONS',
+                    'ADDRESS', 'PHONE', 'MEMBER SINCE', 'REWARDS',
+                ]
+                if any(kw in line.upper() for kw in skip_keywords):
+                    continue
+
+                # Try each pattern
+                for pattern, date_grp, desc_grp, amt_grp, credit_grp in patterns:
+                    match = re.match(pattern, line, re.IGNORECASE)
+                    if match:
+                        try:
+                            date_str = match.group(date_grp).strip()
+                            description = match.group(desc_grp).strip()
+                            amount_str = match.group(amt_grp).strip()
+                            has_credit = credit_grp and match.group(credit_grp)
+
+                            # Skip if description is too short or looks like a header
+                            if len(description) < 3:
+                                continue
+
+                            # Parse date
+                            parsed_date = self._parse_generic_date(date_str)
+                            if not parsed_date:
+                                continue
+
+                            # Parse amount
+                            amount = float(amount_str.replace(',', ''))
+
+                            # Determine if credit (negative in our system)
+                            is_credit = has_credit or amount < 0
+                            if is_credit:
+                                amount = -abs(amount)
+                            else:
+                                amount = abs(amount)
+
+                            # Clean description
+                            cleaned_desc = self.clean_merchant_description(description)
+
+                            # Detect payment
+                            is_payment = any(
+                                kw in description.upper()
+                                for kw in ['PAYMENT', 'AUTOPAY', 'THANK YOU', 'ACH PAYMENT']
+                            )
+
+                            transactions.append({
+                                'date': parsed_date.isoformat(),
+                                'description_raw': description,
+                                'merchant_normalized': cleaned_desc,
+                                'amount': amount,
+                                'is_payment': is_payment,
+                                'currency': 'USD',
+                                'row_index': row_index,
+                            })
+                            row_index += 1
+                            break  # Stop trying patterns once we match
+
+                        except (ValueError, IndexError):
+                            continue
+
+            return transactions
+
+        except Exception as e:
+            print(f"Generic text extraction failed: {str(e)}")
+            return []
+
+    def _parse_generic_date(self, date_str: str) -> Optional[datetime]:
+        """Parse date string in various formats.
+
+        Args:
+            date_str: Date string to parse
+
+        Returns:
+            datetime.date object or None if parsing fails
+        """
+        # Date formats to try
+        formats = [
+            '%m/%d/%Y',  # 01/15/2024
+            '%m/%d/%y',  # 01/15/24
+            '%m/%d',     # 01/15 (use statement year)
+            '%Y-%m-%d',  # 2024-01-15
+            '%m-%d-%Y',  # 01-15-2024
+            '%b %d',     # Jan 15 (use statement year)
+            '%B %d',     # January 15 (use statement year)
+            '%b %d, %Y', # Jan 15, 2024
+        ]
+
+        statement_year = self.statement_year or datetime.now().year
+
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(date_str, fmt)
+                # If year is 1900 (not in format string), use statement year
+                if parsed.year == 1900:
+                    parsed = parsed.replace(year=statement_year)
+                return parsed.date()
+            except ValueError:
+                continue
+
+        return None
+
+    def _extract_fidelity_text_fallback(self) -> List[Dict[str, Any]]:
+        """Extract transactions using Fidelity-specific text parsing.
 
         This method handles Fidelity statements that don't have proper table structure.
         It uses regex patterns to extract transaction lines from the text.
@@ -2445,7 +3064,7 @@ class PDFParser(BaseParser):
             return transactions
 
         except Exception as e:
-            print(f"Text extraction fallback failed: {str(e)}")
+            print(f"Fidelity text extraction fallback failed: {str(e)}")
             return []
 
     def _parse_fidelity_text_section(self, text: str, is_credit: bool, start_row_index: int = 0) -> List[Dict[str, Any]]:

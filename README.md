@@ -12,6 +12,7 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 ### Statement Import
 - **Multi-Format**: CSV and PDF support
 - **Supported Banks**: Chase, Fidelity, Amex, Capital One, Wells Fargo, Ally, IBKR, Vanguard 401(k)
+- **Unknown Format Handling**: AI-powered extraction for unsupported PDF formats using Claude Vision
 - **Smart Detection**: Auto-detects columns in CSV files
 - **AI Classification**: Claude AI categorizes transactions automatically
 - **Deduplication**: Hash-based prevention of duplicate imports
@@ -184,6 +185,9 @@ Full API docs: http://localhost:8000/docs
 | IBKR | PDF | Supported |
 | Vanguard 401(k) | PDF | Supported |
 | Any Bank | CSV | Supported |
+| Unknown Banks | PDF | AI Fallback* |
+
+*Unknown PDF formats use Claude Vision for extraction when pattern matching fails. Set `ENABLE_LLM_PDF_EXTRACTION=false` to disable.
 
 ## Privacy & Security
 - **Data Isolation**: Multi-user support with strict data separation
