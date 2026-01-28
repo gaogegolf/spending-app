@@ -607,10 +607,16 @@ export default function NetWorthPage() {
 
         {/* Net Worth Summary */}
         {!loading && netWorth && (() => {
-          // Group accounts by category
+          // Group accounts by category (deduplicate by account_id)
           const cashTypes = ['CHECKING', 'SAVINGS'];
-          const cashAccounts = netWorth.accounts.filter(a => cashTypes.includes(a.account_type));
-          const investmentAccounts = netWorth.accounts.filter(a => !cashTypes.includes(a.account_type));
+          const seenIds = new Set<string>();
+          const uniqueAccounts = netWorth.accounts.filter(a => {
+            if (seenIds.has(a.account_id)) return false;
+            seenIds.add(a.account_id);
+            return true;
+          });
+          const cashAccounts = uniqueAccounts.filter(a => cashTypes.includes(a.account_type));
+          const investmentAccounts = uniqueAccounts.filter(a => !cashTypes.includes(a.account_type));
           const cashTotal = cashAccounts.reduce((sum, a) => sum + a.latest_value, 0);
           const investmentTotal = investmentAccounts.reduce((sum, a) => sum + a.latest_value, 0);
           const total = netWorth.current_total || 1;

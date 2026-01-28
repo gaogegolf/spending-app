@@ -64,6 +64,8 @@ export interface ImportRecord {
   error_message: string | null;
   transactions_imported: number;
   transactions_duplicate: number;
+  transactions_quarantined?: number;
+  quarantine_resolved?: boolean;
   created_at: string;
   completed_at: string | null;
 }
