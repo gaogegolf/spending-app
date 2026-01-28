@@ -42,6 +42,7 @@ interface TransactionParseResult {
   errors?: string[];
   detected_institution: string | null;
   detected_account_type: string | null;
+  detected_account_last4: string | null;
 }
 
 export default function ImportsPage() {
@@ -155,10 +156,10 @@ export default function ImportsPage() {
       setImportRecords([]);
       setStep('upload');
 
-      // For auto-detect mode with single file, show preview
-      if (autoDetectMode && files.length === 1) {
+      // For single file, show preview (allows user to verify account match)
+      if (files.length === 1) {
         const file = files[0];
-        const uploadResult = await uploadFile(null, file); // Upload without account
+        const uploadResult = await uploadFile(autoDetectMode ? null : selectedAccount, file);
         setTransactionImportId(uploadResult.id);
 
         setStep('processing');
@@ -175,7 +176,7 @@ export default function ImportsPage() {
         return;
       }
 
-      // For non-auto-detect mode or multiple files, process directly
+      // For multiple files, process directly
       const results: ImportRecord[] = [];
 
       for (let i = 0; i < files.length; i++) {
@@ -443,7 +444,7 @@ export default function ImportsPage() {
                       <span className="font-semibold text-gray-900">Brokerage Statement</span>
                     </div>
                     <p className="text-sm text-gray-600">
-                      Fidelity, Schwab investment accounts (PDF only)
+                      Fidelity, Schwab, Vanguard, IBKR, Wealthfront, Equatex (PDF)
                     </p>
                   </button>
                 </div>
@@ -500,7 +501,7 @@ export default function ImportsPage() {
                         </p>
                         <p className={`text-sm mt-1 ${importType === 'brokerage' ? 'text-emerald-700' : 'text-indigo-700'}`}>
                           {importType === 'brokerage'
-                            ? "We'll automatically detect your brokerage from the statement and create an account for you. Supports Fidelity and Schwab."
+                            ? "We'll automatically detect your brokerage from the statement and create an account for you. Supports Fidelity, Schwab, Vanguard, IBKR, Wealthfront, and Equatex."
                             : "We'll automatically detect your bank from the statement and create an account for you. Supports Chase, Amex, Wells Fargo, Capital One, Ally Bank, Fidelity, and more."
                           }
                         </p>
@@ -582,7 +583,7 @@ export default function ImportsPage() {
                   <p className="mt-3 text-sm text-gray-500 flex items-center">
                     <span className="mr-2">📄</span>
                     {importType === 'brokerage'
-                      ? 'Supported: PDF statements from Fidelity or Schwab'
+                      ? 'Supported: PDF statements from Fidelity, Schwab, Vanguard, IBKR, Wealthfront, Equatex'
                       : 'Supported formats: CSV, PDF (up to 10MB each). You can select multiple files.'
                     }
                   </p>
@@ -595,7 +596,7 @@ export default function ImportsPage() {
                 disabled={
                   importing ||
                   files.length === 0 ||
-                  (importType === 'brokerage' && !selectedAccount) ||
+                  (importType === 'brokerage' && !autoDetectMode && !selectedAccount) ||
                   (importType === 'transactions' && !autoDetectMode && !selectedAccount)
                 }
                 className={`w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-lg shadow-lg text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all transform hover:scale-105 ${
@@ -706,6 +707,28 @@ export default function ImportsPage() {
                 ))}
               </div>
             )}
+
+            {/* Account Mismatch Warning */}
+            {selectedAccount && (() => {
+              const selectedAccountObj = accounts.find(a => a.id === selectedAccount);
+              if (selectedAccountObj?.account_number_last4 &&
+                  transactionParseResult.detected_account_last4 &&
+                  selectedAccountObj.account_number_last4 !== transactionParseResult.detected_account_last4) {
+                return (
+                  <div className="bg-red-50 rounded-lg p-4 mb-6 border border-red-200">
+                    <p className="font-semibold text-red-800 mb-2">⚠️ Account Number Mismatch</p>
+                    <p className="text-sm text-red-700">
+                      The statement appears to be for an account ending in <strong>...{transactionParseResult.detected_account_last4}</strong>,
+                      but you selected <strong>{selectedAccountObj.name}</strong> which ends in <strong>...{selectedAccountObj.account_number_last4}</strong>.
+                    </p>
+                    <p className="text-sm text-red-700 mt-2">
+                      Please verify you&apos;re importing to the correct account, or select &quot;Auto-create new account&quot; to create a new account.
+                    </p>
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Transaction Preview */}
             <div className="border rounded-xl overflow-hidden mb-6">
@@ -825,6 +848,36 @@ export default function ImportsPage() {
                 </div>
               </div>
             </div>
+
+            {/* Provider Mismatch Warning */}
+            {!autoDetectMode && selectedAccount && (() => {
+              const selectedAccountData = accounts.find(a => a.id === selectedAccount);
+              const detectedProvider = brokerageParseResult.provider.toLowerCase();
+              const accountInstitution = selectedAccountData?.institution?.toLowerCase() || '';
+              const isMismatch = accountInstitution && !accountInstitution.includes(detectedProvider) && !detectedProvider.includes(accountInstitution);
+
+              if (isMismatch) {
+                return (
+                  <div className="bg-red-50 rounded-lg p-4 mb-6 border-2 border-red-300">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">⚠️</span>
+                      <div>
+                        <p className="font-bold text-red-800">Provider Mismatch Detected!</p>
+                        <p className="text-sm text-red-700 mt-1">
+                          This statement is from <strong>{brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)}</strong>,
+                          but you selected <strong>{selectedAccountData?.name}</strong> ({selectedAccountData?.institution}).
+                        </p>
+                        <p className="text-sm text-red-700 mt-2">
+                          If you continue, the holdings will be imported into the wrong account.
+                          Consider using <strong>Auto-detect</strong> mode or selecting the correct account.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
 
             {/* Warnings */}
             {brokerageParseResult.warnings && brokerageParseResult.warnings.length > 0 && (

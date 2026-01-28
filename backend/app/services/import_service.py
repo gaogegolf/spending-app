@@ -233,7 +233,8 @@ class ImportService:
                 'duplicate_count': duplicate_count,
                 'warnings': result.warnings,
                 'detected_institution': result.detected_institution,
-                'detected_account_type': result.detected_account_type
+                'detected_account_type': result.detected_account_type,
+                'detected_account_last4': result.metadata.get('account_last4') if result.metadata else None
             }
 
         except Exception as e:
