@@ -1,6 +1,6 @@
 """Import record model - tracks file import history."""
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Enum, JSON
+from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey, Enum, JSON, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -42,6 +42,8 @@ class ImportRecord(Base):
     error_message = Column(Text)
     transactions_imported = Column(Integer, default=0)
     transactions_duplicate = Column(Integer, default=0)
+    transactions_quarantined = Column(Integer, default=0)
+    quarantine_resolved = Column(Boolean, default=True)
     import_metadata = Column(JSON)  # Store column mappings, parsing options, detected institution, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
