@@ -757,3 +757,109 @@ export async function exportReport(params: {
   document.body.removeChild(a);
   window.URL.revokeObjectURL(downloadUrl);
 }
+
+// Quarantine types
+export interface QuarantinedTransaction {
+  id: string;
+  import_id: string;
+  account_id: string | null;
+  account_name: string | null;
+  user_id: string;
+  raw_data: Record<string, any>;
+  error_type: 'PARSE_ERROR' | 'VALIDATION_ERROR' | 'DUPLICATE';
+  error_message: string;
+  error_field: string | null;
+  retry_count: number;
+  status: 'PENDING' | 'RESOLVED' | 'DISCARDED';
+  created_at: string;
+  resolved_at: string | null;
+  import_filename: string | null;
+}
+
+export interface QuarantineListResponse {
+  items: QuarantinedTransaction[];
+  total: number;
+  pending_count: number;
+}
+
+export interface QuarantineRetryResponse {
+  id: string;
+  status: 'PENDING' | 'RESOLVED' | 'DISCARDED';
+  error_message: string | null;
+  transaction_id: string | null;
+}
+
+// Quarantine API functions
+export async function getQuarantinedTransactions(params?: {
+  import_id?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<QuarantineListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.import_id) searchParams.set('import_id', params.import_id);
+  if (params?.status) searchParams.set('filter_status', params.status);
+  if (params?.limit) searchParams.set('limit', params.limit.toString());
+  if (params?.offset) searchParams.set('offset', params.offset.toString());
+
+  const url = `${API_BASE_URL}/quarantine${searchParams.toString() ? '?' + searchParams.toString() : ''}`;
+  const response = await authFetch(url);
+  if (!response.ok) throw new Error('Failed to fetch quarantined transactions');
+  return response.json();
+}
+
+export async function getQuarantinedTransaction(id: string): Promise<QuarantinedTransaction> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/${id}`);
+  if (!response.ok) throw new Error('Failed to fetch quarantined transaction');
+  return response.json();
+}
+
+export async function updateQuarantinedTransaction(
+  id: string,
+  updates: Partial<{ date: string; amount: number; description: string; account_id: string }>
+): Promise<QuarantinedTransaction> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) throw new Error('Failed to update quarantined transaction');
+  return response.json();
+}
+
+export async function retryQuarantinedTransaction(id: string): Promise<QuarantineRetryResponse> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/${id}/retry`, { method: 'POST' });
+  if (!response.ok) throw new Error('Failed to retry quarantined transaction');
+  return response.json();
+}
+
+export async function discardQuarantinedTransaction(id: string): Promise<QuarantinedTransaction> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/${id}/discard`, { method: 'POST' });
+  if (!response.ok) throw new Error('Failed to discard quarantined transaction');
+  return response.json();
+}
+
+export async function bulkRetryQuarantined(ids: string[]): Promise<{
+  success_count: number;
+  failed_count: number;
+  results: QuarantineRetryResponse[];
+}> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/bulk-retry`, {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) throw new Error('Failed to bulk retry quarantined transactions');
+  return response.json();
+}
+
+export async function bulkDiscardQuarantined(ids: string[]): Promise<{
+  success_count: number;
+  failed_count: number;
+  results: QuarantineRetryResponse[];
+}> {
+  const response = await authFetch(`${API_BASE_URL}/quarantine/bulk-discard`, {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  });
+  if (!response.ok) throw new Error('Failed to bulk discard quarantined transactions');
+  return response.json();
+}
