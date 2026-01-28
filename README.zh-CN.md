@@ -11,7 +11,8 @@
 
 ### 账单导入
 - **多格式支持**: CSV 和 PDF
-- **支持银行**: Chase、Fidelity、Amex、Capital One、Wells Fargo、Ally、IBKR、Vanguard 401(k)
+- **支持银行**: Chase、Fidelity、Amex、Capital One、Wells Fargo、Ally、Wealthfront、IBKR、Vanguard 401(k)
+- **未知格式处理**: 使用Claude Vision AI提取未支持的PDF格式
 - **智能检测**: 自动识别CSV列格式
 - **AI分类**: Claude AI自动分类交易
 - **去重**: 基于哈希的重复导入防护
@@ -142,7 +143,11 @@ pip install email-validator 'bcrypt<4.1'
 | Ally Bank | PDF | 已支持 |
 | 盈透证券 IBKR | PDF | 已支持 |
 | Vanguard 401(k) | PDF | 已支持 |
+| Wealthfront | PDF | 已支持 |
 | 任意银行 | CSV | 已支持 |
+| 未知银行 | PDF | AI回退* |
+
+*未知PDF格式在模式匹配失败时使用Claude Vision提取。设置 `ENABLE_LLM_PDF_EXTRACTION=false` 可禁用。
 
 ## 隐私与安全
 - 仅向AI发送日期/描述/金额（无个人信息）
