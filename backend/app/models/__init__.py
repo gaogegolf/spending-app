@@ -9,6 +9,11 @@ from app.models.holdings_snapshot import HoldingsSnapshot
 from app.models.position import Position, PositionType, AssetClass
 from app.models.fx_rate import FxRate
 from app.models.session import Session
+from app.models.quarantined_transaction import (
+    QuarantinedTransaction,
+    QuarantineErrorType,
+    QuarantineStatus,
+)
 
 __all__ = [
     "User",
@@ -28,4 +33,7 @@ __all__ = [
     "AssetClass",
     "FxRate",
     "Session",
+    "QuarantinedTransaction",
+    "QuarantineErrorType",
+    "QuarantineStatus",
 ]

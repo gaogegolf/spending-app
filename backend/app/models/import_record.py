@@ -51,6 +51,7 @@ class ImportRecord(Base):
     user = relationship("User", back_populates="pending_imports")
     transactions = relationship("Transaction", back_populates="import_record")
     holdings_snapshot = relationship("HoldingsSnapshot", back_populates="import_record", uselist=False)
+    quarantined_transactions = relationship("QuarantinedTransaction", back_populates="import_record", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<ImportRecord(id={self.id}, filename='{self.filename}', status={self.status})>"
