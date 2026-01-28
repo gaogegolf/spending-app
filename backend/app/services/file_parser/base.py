@@ -1,8 +1,8 @@
 """Base parser interface."""
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
-from dataclasses import dataclass
+from typing import List, Dict, Any, Optional
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +14,8 @@ class ParseResult:
     errors: List[str]
     warnings: List[str]
     metadata: Dict[str, Any]
+    detected_institution: Optional[str] = None
+    detected_account_type: Optional[str] = None
 
 
 class BaseParser(ABC):

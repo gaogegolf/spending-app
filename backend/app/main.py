@@ -1,14 +1,62 @@
 """Main FastAPI application entry point."""
 
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from alembic.config import Config
+from alembic import command
+
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def run_migrations():
+    """Run alembic migrations on startup if needed."""
+    from alembic.runtime.migration import MigrationContext
+    from sqlalchemy import create_engine, text
+
+    try:
+        # Check current revision
+        engine = create_engine(settings.DATABASE_URL)
+        with engine.connect() as conn:
+            context = MigrationContext.configure(conn)
+            current_rev = context.get_current_revision()
+
+        # Get head revision
+        alembic_cfg = Config("alembic.ini")
+        from alembic.script import ScriptDirectory
+        script = ScriptDirectory.from_config(alembic_cfg)
+        head_rev = script.get_current_head()
+
+        if current_rev == head_rev:
+            logger.debug("Database schema is up to date")
+            return
+
+        # Run migrations
+        logger.info(f"Running migrations: {current_rev} -> {head_rev}")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations completed successfully")
+    except Exception as e:
+        logger.error(f"Failed to run migrations: {e}")
+        raise
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan - run migrations on startup."""
+    run_migrations()
+    yield
+
 
 # Create FastAPI application
 app = FastAPI(
     title="Personal Finance Manager API",
     description="API for managing personal finance transactions with automatic classification",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS

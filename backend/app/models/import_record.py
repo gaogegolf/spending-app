@@ -32,7 +32,8 @@ class ImportRecord(Base):
     __tablename__ = "import_records"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    account_id = Column(String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True)  # Nullable for auto-detect mode
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)  # For imports without account
     source_type = Column(Enum(SourceType), nullable=False)
     filename = Column(String(500), nullable=False)
     file_size_bytes = Column(Integer)
@@ -41,12 +42,13 @@ class ImportRecord(Base):
     error_message = Column(Text)
     transactions_imported = Column(Integer, default=0)
     transactions_duplicate = Column(Integer, default=0)
-    import_metadata = Column(JSON)  # Store column mappings, parsing options, etc.
+    import_metadata = Column(JSON)  # Store column mappings, parsing options, detected institution, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime)
 
     # Relationships
     account = relationship("Account", back_populates="imports")
+    user = relationship("User", back_populates="pending_imports")
     transactions = relationship("Transaction", back_populates="import_record")
     holdings_snapshot = relationship("HoldingsSnapshot", back_populates="import_record", uselist=False)
 

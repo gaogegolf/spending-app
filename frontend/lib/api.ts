@@ -84,10 +84,12 @@ export async function deleteAccount(id: string, permanent: boolean = false) {
 }
 
 // Imports API
-export async function uploadFile(accountId: string, file: File) {
+export async function uploadFile(accountId: string | null, file: File) {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('account_id', accountId);
+  if (accountId) {
+    formData.append('account_id', accountId);
+  }
 
   const response = await authFetch(`${API_BASE_URL}/imports/upload`, {
     method: 'POST',
@@ -111,9 +113,22 @@ export async function parseImport(importId: string) {
   return response.json();
 }
 
-export async function commitImport(importId: string) {
+export async function commitImport(
+  importId: string,
+  options?: {
+    accountId?: string;
+    createAccount?: boolean;
+    accountName?: string;
+  }
+) {
+  const formData = new FormData();
+  if (options?.accountId) formData.append('account_id', options.accountId);
+  if (options?.createAccount !== undefined) formData.append('create_account', String(options.createAccount));
+  if (options?.accountName) formData.append('account_name', options.accountName);
+
   const response = await authFetch(`${API_BASE_URL}/imports/${importId}/commit`, {
     method: 'POST',
+    body: formData,
   });
 
   if (!response.ok) {

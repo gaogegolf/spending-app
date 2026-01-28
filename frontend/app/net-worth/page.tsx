@@ -1079,7 +1079,7 @@ export default function NetWorthPage() {
                   <div className="text-center">
                     <div className="text-6xl mb-4">📄</div>
                     <p className="text-gray-600 mb-6">
-                      Upload PDF statements from Fidelity, Schwab, or Interactive Brokers. You can select multiple files.
+                      Upload PDF statements from Fidelity, Schwab, Interactive Brokers, Vanguard, or Wealthfront. We'll auto-detect the provider and create accounts for you.
                     </p>
                     <input
                       ref={fileInputRef}

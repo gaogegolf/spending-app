@@ -22,43 +22,63 @@ from app.services.classifier.llm_classifier import LLMClassifier
 from app.services.classifier.rule_engine import RuleEngine
 from app.services.deduplication import DeduplicationService
 from app.services.bank_balance_service import BankBalanceService
+from app.services.fx_rate_service import FxRateService
 from app.config import settings
 
 
 class ImportService:
     """Service to orchestrate the import process."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[str] = None):
         """Initialize import service.
 
         Args:
             db: Database session
+            user_id: User ID for ownership tracking (required for auto-detect mode)
         """
         self.db = db
+        self.user_id = user_id
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
-        self.llm_classifier = LLMClassifier()
+        self._llm_classifier = None  # Lazy-loaded
         self.rule_engine = RuleEngine(db)
         self.dedup_service = DeduplicationService(db)
+
+    @property
+    def llm_classifier(self) -> Optional[LLMClassifier]:
+        """Lazy-load LLM classifier only when needed.
+
+        Returns None if ANTHROPIC_API_KEY is not set.
+        """
+        if self._llm_classifier is None:
+            try:
+                self._llm_classifier = LLMClassifier()
+            except ValueError as e:
+                if "ANTHROPIC_API_KEY" in str(e):
+                    logger.warning("LLM classification disabled: ANTHROPIC_API_KEY not set")
+                    return None
+                raise
+        return self._llm_classifier
 
     async def process_upload(
         self,
         file: UploadFile,
-        account_id: str
+        account_id: Optional[str] = None
     ) -> ImportRecord:
         """Process file upload and create import record.
 
         Args:
             file: Uploaded file
-            account_id: Account ID to associate with import
+            account_id: Account ID to associate with import (optional for auto-detect mode)
 
         Returns:
             ImportRecord with PENDING status
         """
-        # Validate account exists
-        account = self.db.query(Account).filter(Account.id == account_id).first()
-        if not account:
-            raise ValueError(f"Account {account_id} not found")
+        # If account_id provided, validate it exists
+        if account_id:
+            account = self.db.query(Account).filter(Account.id == account_id).first()
+            if not account:
+                raise ValueError(f"Account {account_id} not found")
 
         # Determine source type
         filename = file.filename
@@ -75,20 +95,22 @@ class ImportService:
         await file.seek(0)  # Reset file pointer
 
         # Check if this file was already imported (warn but allow re-import)
-        existing = self.db.query(ImportRecord).filter(
-            ImportRecord.account_id == account_id,
-            ImportRecord.file_hash == file_hash
-        ).first()
+        if account_id:
+            existing = self.db.query(ImportRecord).filter(
+                ImportRecord.account_id == account_id,
+                ImportRecord.file_hash == file_hash
+            ).first()
 
-        if existing:
-            logger.warning(
-                f"File was previously imported on {existing.created_at}. "
-                f"Import ID: {existing.id}. Allowing re-import."
-            )
+            if existing:
+                logger.warning(
+                    f"File was previously imported on {existing.created_at}. "
+                    f"Import ID: {existing.id}. Allowing re-import."
+                )
 
         # Save file to disk
         import_record = ImportRecord(
-            account_id=account_id,
+            account_id=account_id,  # Can be None for auto-detect mode
+            user_id=self.user_id,  # Track user for pending imports
             source_type=source_type,
             filename=filename,
             file_size_bytes=len(file_content),
@@ -173,26 +195,32 @@ class ImportService:
                 return {
                     'success': False,
                     'errors': result.errors,
-                    'warnings': result.warnings
+                    'warnings': result.warnings,
+                    'detected_institution': result.detected_institution,
+                    'detected_account_type': result.detected_account_type
                 }
 
-            # Store parsed transactions in import_metadata for later commit
+            # Store parsed transactions and detection info in import_metadata for later commit
             import_record.import_metadata = {
                 'parsed_transactions': result.transactions,
                 'detected_columns': detected_columns,
-                'parse_metadata': result.metadata
+                'parse_metadata': result.metadata,
+                'detected_institution': result.detected_institution,
+                'detected_account_type': result.detected_account_type
             }
 
             self.db.commit()
 
             # Run deduplication check (preview only, don't skip yet)
-            duplicate_hashes = self.dedup_service.check_duplicates(
-                account_id=import_record.account_id,
-                file_hash=import_record.file_hash,
-                transactions=result.transactions
-            )
-
-            duplicate_count = len(duplicate_hashes)
+            # Only check if we have an account_id
+            duplicate_count = 0
+            if import_record.account_id:
+                duplicate_hashes = self.dedup_service.check_duplicates(
+                    account_id=import_record.account_id,
+                    file_hash=import_record.file_hash,
+                    transactions=result.transactions
+                )
+                duplicate_count = len(duplicate_hashes)
 
             return {
                 'success': True,
@@ -203,7 +231,9 @@ class ImportService:
                 'transactions_preview': result.transactions[:20],  # First 20 for preview
                 'total_count': len(result.transactions),
                 'duplicate_count': duplicate_count,
-                'warnings': result.warnings
+                'warnings': result.warnings,
+                'detected_institution': result.detected_institution,
+                'detected_account_type': result.detected_account_type
             }
 
         except Exception as e:
@@ -212,11 +242,20 @@ class ImportService:
             self.db.commit()
             raise
 
-    async def commit_import(self, import_id: str) -> ImportRecord:
+    async def commit_import(
+        self,
+        import_id: str,
+        account_id: Optional[str] = None,
+        create_account: bool = True,
+        account_name: Optional[str] = None
+    ) -> ImportRecord:
         """Finalize import - classify and insert transactions into database.
 
         Args:
             import_id: Import record ID
+            account_id: Account ID to use (overrides any existing or detected)
+            create_account: If True and no account, auto-create from detection
+            account_name: Custom name for auto-created account
 
         Returns:
             Updated import record with SUCCESS/PARTIAL/FAILED status
@@ -239,12 +278,33 @@ class ImportService:
             )
 
         try:
+            # Determine which account to use
+            effective_account_id = account_id or import_record.account_id
+
+            # If no account yet and create_account is True, auto-create
+            if not effective_account_id and create_account:
+                effective_account_id = self._create_account_from_detection(
+                    import_record, account_name
+                )
+                import_record.account_id = effective_account_id
+                self.db.commit()
+
+            if not effective_account_id:
+                raise ValueError(
+                    "No account specified. Provide account_id or enable create_account."
+                )
+
+            # Update import record with account if it was passed in
+            if account_id and import_record.account_id != account_id:
+                import_record.account_id = account_id
+                self.db.commit()
+
             parsed_txns = import_record.import_metadata['parsed_transactions']
             file_hash = import_record.file_hash
 
             # Get user_id from account for user-specific queries
             account = self.db.query(Account).filter(Account.id == import_record.account_id).first()
-            user_id = account.user_id if account else None
+            user_id = account.user_id if account else self.user_id
 
             # Step 1: Deduplication - filter out existing transactions
             new_txns = self.dedup_service.filter_duplicates(
@@ -378,7 +438,7 @@ class ImportService:
             # Step 4: Send remaining unmatched (non-payment) to LLM classifier
             llm_classified_txns = []
 
-            if non_payment_txns and settings.ENABLE_LLM_CLASSIFICATION:
+            if non_payment_txns and settings.ENABLE_LLM_CLASSIFICATION and self.llm_classifier:
                 classified_results = self.llm_classifier.classify_batch(non_payment_txns)
                 # CRITICAL: Merge classification results with original transaction data
                 # The LLM classifier only returns classification fields, not the original
@@ -397,6 +457,10 @@ class ImportService:
 
             # Step 5: Merge all classified transactions and insert
             all_classified = rule_matched_txns + learned_txns + payment_txns + income_txns + llm_classified_txns
+
+            # Step 5.5: Apply FX conversion for non-USD transactions
+            fx_service = FxRateService(self.db)
+            all_classified = fx_service.batch_convert(all_classified)
 
             successfully_inserted = 0
             duplicate_count = 0
@@ -447,6 +511,9 @@ class ImportService:
 
                 if 'post_date' in merged_data and isinstance(merged_data['post_date'], str):
                     merged_data['post_date'] = datetime.fromisoformat(merged_data['post_date']).date()
+
+                if 'fx_rate_date' in merged_data and isinstance(merged_data['fx_rate_date'], str):
+                    merged_data['fx_rate_date'] = datetime.fromisoformat(merged_data['fx_rate_date']).date()
 
                 transaction = Transaction(
                     account_id=import_record.account_id,
@@ -513,6 +580,101 @@ class ImportService:
     def _get_file_path(self, import_record: ImportRecord) -> Path:
         """Get file path for import record."""
         return self.upload_dir / f"{import_record.id}_{import_record.filename}"
+
+    def _create_account_from_detection(
+        self,
+        import_record: ImportRecord,
+        custom_name: Optional[str] = None
+    ) -> str:
+        """Create an account based on detected institution from parsing.
+
+        Args:
+            import_record: Import record with detection metadata
+            custom_name: Optional custom name for the account
+
+        Returns:
+            ID of the created account
+        """
+        metadata = import_record.import_metadata or {}
+        detected_institution = metadata.get('detected_institution')
+        detected_account_type = metadata.get('detected_account_type', 'CREDIT_CARD')
+
+        # Get last 4 digits from parse metadata (nested in parse_metadata)
+        parse_metadata = metadata.get('parse_metadata', {})
+        account_last4 = parse_metadata.get('account_last4')
+
+        if not detected_institution:
+            detected_institution = 'Unknown'
+            logger.warning(f"No institution detected for import {import_record.id}, using 'Unknown'")
+
+        # Generate account name
+        if custom_name:
+            account_name = custom_name
+        else:
+            # Format: "Chase Credit Card" or "Ally Bank Checking"
+            type_display = detected_account_type.replace('_', ' ').title()
+            account_name = f"{detected_institution} {type_display}"
+
+        # Check for existing account with same institution, type, and last4
+        existing = self._find_existing_account(detected_institution, detected_account_type, account_last4)
+        if existing:
+            logger.info(f"Found existing account {existing.id} for {detected_institution} {detected_account_type} (last4: {account_last4})")
+            return existing.id
+
+        # Create new account
+        user_id = import_record.user_id or self.user_id
+        if not user_id:
+            raise ValueError("Cannot create account: no user_id available")
+
+        new_account = Account(
+            user_id=user_id,
+            name=account_name,
+            account_type=detected_account_type,
+            institution=detected_institution,
+            account_number_last4=account_last4,
+            is_active=True
+        )
+
+        self.db.add(new_account)
+        self.db.commit()
+        self.db.refresh(new_account)
+
+        logger.info(f"Created new account {new_account.id}: {account_name}")
+        return new_account.id
+
+    def _find_existing_account(
+        self,
+        institution: str,
+        account_type: str,
+        last4: Optional[str] = None
+    ) -> Optional[Account]:
+        """Find an existing account matching institution, type, and optionally last4.
+
+        Args:
+            institution: Institution name (e.g., 'Chase')
+            account_type: Account type (e.g., 'CREDIT_CARD')
+            last4: Last 4 digits of account/card number (optional)
+
+        Returns:
+            Matching Account or None
+        """
+        user_id = self.user_id
+        if not user_id:
+            return None
+
+        # Build query with required filters
+        query = self.db.query(Account).filter(
+            Account.user_id == user_id,
+            Account.institution == institution,
+            Account.account_type == account_type,
+            Account.is_active == True
+        )
+
+        # If last4 provided, require exact match to avoid mismatching accounts
+        if last4:
+            query = query.filter(Account.account_number_last4 == last4)
+
+        return query.first()
 
     def _default_classification(self, txn_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
         """Apply default classification when LLM is disabled or fails.

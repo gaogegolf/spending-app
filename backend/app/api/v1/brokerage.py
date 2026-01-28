@@ -82,16 +82,28 @@ async def parse_brokerage_statement(
     Returns:
         Parsed holdings preview with reconciliation status
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # For brokerage imports, account_id may be "pending" until commit
+    # So we need to check differently
+    import_record = db.query(ImportRecord).filter(
+        ImportRecord.id == import_id
     ).first()
     if not import_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
         )
+
+    # Verify ownership - if account_id is not "pending", check account belongs to user
+    if import_record.account_id and import_record.account_id != "pending":
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
 
     service = BrokerageImportService(db, user_id=current_user.id)
 
@@ -140,16 +152,27 @@ async def commit_brokerage_import(
     Returns:
         Commit result with snapshot ID
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # For brokerage imports, account_id may be "pending" until commit
+    import_record = db.query(ImportRecord).filter(
+        ImportRecord.id == import_id
     ).first()
     if not import_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
         )
+
+    # Verify ownership - if account_id is not "pending", check account belongs to user
+    if import_record.account_id and import_record.account_id != "pending":
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
 
     # Verify account_id belongs to user if provided
     if account_id:

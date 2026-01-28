@@ -55,7 +55,8 @@ class StatsService:
             query = query.filter(Transaction.account_id == account_id)
 
         # CRITICAL: Calculate total spending (ONLY is_spend=true)
-        total_spend = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+        # Use amount_usd if available for multi-currency support, fallback to amount
+        total_spend = self.db.query(func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount))).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date >= start_date,
             Transaction.date < end_date,
@@ -66,7 +67,7 @@ class StatsService:
         total_spend = float(total_spend.scalar() or 0)
 
         # Calculate total income
-        total_income = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+        total_income = self.db.query(func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount))).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date >= start_date,
             Transaction.date < end_date,
@@ -79,7 +80,7 @@ class StatsService:
         # Get category breakdown (only for spending)
         category_query = self.db.query(
             Transaction.category,
-            func.sum(Transaction.amount).label('total'),
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('total'),
             func.count(Transaction.id).label('count')
         ).join(Account).filter(
             Account.user_id == user_id,
@@ -162,9 +163,9 @@ class StatsService:
         """
         query = self.db.query(
             Transaction.category,
-            func.sum(Transaction.amount).label('total'),
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('total'),
             func.count(Transaction.id).label('count'),
-            func.avg(Transaction.amount).label('avg_amount')
+            func.avg(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('avg_amount')
         ).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date.between(start_date, end_date),
@@ -175,7 +176,7 @@ class StatsService:
         if account_id:
             query = query.filter(Transaction.account_id == account_id)
 
-        results = query.group_by(Transaction.category).order_by(func.sum(Transaction.amount).desc()).all()
+        results = query.group_by(Transaction.category).order_by(func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).desc()).all()
 
         total = sum(float(r.total) for r in results)
 
@@ -206,9 +207,9 @@ class StatsService:
         """
         results = self.db.query(
             Transaction.merchant_normalized,
-            func.sum(Transaction.amount).label('total'),
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('total'),
             func.count(Transaction.id).label('count'),
-            func.avg(Transaction.amount).label('avg_amount')
+            func.avg(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('avg_amount')
         ).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date.between(start_date, end_date),
@@ -217,7 +218,7 @@ class StatsService:
         ).group_by(
             Transaction.merchant_normalized
         ).order_by(
-            func.sum(Transaction.amount).desc()
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).desc()
         ).limit(limit).all()
 
         return [
@@ -245,7 +246,8 @@ class StatsService:
             Dictionary with date range summary including totals and category breakdown
         """
         # Calculate total spending (ONLY is_spend=true)
-        total_spend = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+        # Use amount_usd if available for multi-currency support, fallback to amount
+        total_spend = self.db.query(func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount))).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date >= start_date,
             Transaction.date <= end_date,
@@ -256,7 +258,7 @@ class StatsService:
         total_spend = float(total_spend.scalar() or 0)
 
         # Calculate total income
-        total_income = self.db.query(func.sum(Transaction.amount)).join(Account).filter(
+        total_income = self.db.query(func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount))).join(Account).filter(
             Account.user_id == user_id,
             Transaction.date >= start_date,
             Transaction.date <= end_date,
@@ -279,7 +281,7 @@ class StatsService:
         # Get category breakdown (only for spending)
         category_query = self.db.query(
             Transaction.category,
-            func.sum(Transaction.amount).label('total'),
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).label('total'),
             func.count(Transaction.id).label('count')
         ).join(Account).filter(
             Account.user_id == user_id,
@@ -292,7 +294,7 @@ class StatsService:
             category_query = category_query.filter(Transaction.account_id == account_id)
 
         category_breakdown = category_query.group_by(Transaction.category).order_by(
-            func.sum(Transaction.amount).desc()
+            func.sum(func.coalesce(Transaction.amount_usd, Transaction.amount)).desc()
         ).all()
 
         # Income is stored as negative, convert to positive for display

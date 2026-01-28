@@ -56,7 +56,8 @@ export type ImportStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'PA
 
 export interface ImportRecord {
   id: string;
-  account_id: string;
+  account_id: string | null;
+  account_name?: string;  // Populated after commit
   source_type: SourceType;
   filename: string;
   status: ImportStatus;

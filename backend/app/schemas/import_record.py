@@ -54,7 +54,9 @@ class ImportStatusResponse(BaseModel):
     """Schema for import status response."""
 
     id: str
-    account_id: str
+    account_id: Optional[str] = None
+    account_name: Optional[str] = None
+    user_id: Optional[str] = None
     source_type: SourceType
     filename: str
     status: ImportStatus

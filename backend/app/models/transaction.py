@@ -48,6 +48,12 @@ class Transaction(Base):
     amount = Column(Numeric(15, 2), nullable=False)  # Always positive
     currency = Column(String(3), default="USD")
 
+    # FX conversion fields (for multi-currency support)
+    amount_usd = Column(Numeric(15, 2), nullable=True)  # USD-normalized amount
+    fx_rate_used = Column(Numeric(18, 8), nullable=True)  # FX rate applied
+    fx_rate_date = Column(Date, nullable=True)  # Date of the FX rate
+    fx_rate_source = Column(String(50), nullable=True)  # "statement", "api", "none"
+
     # Classification (from LLM or rules)
     transaction_type = Column(Enum(TransactionType), nullable=False)
     category = Column(String(100), index=True)  # e.g., "Food & Dining"

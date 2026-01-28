@@ -2,7 +2,7 @@
 
 import pandas as pd
 import re
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from pathlib import Path
 
@@ -29,6 +29,58 @@ class CSVParser(BaseParser):
         self.column_mapping = column_mapping
         self.amount_convention = amount_convention
         self.df: Optional[pd.DataFrame] = None
+        self.detected_bank: Optional[str] = None
+        self.detected_account_type: Optional[str] = None
+
+    def _detect_csv_bank(self, headers: List[str]) -> Tuple[Optional[str], Optional[str]]:
+        """Detect bank from CSV headers.
+
+        Args:
+            headers: List of column headers from CSV
+
+        Returns:
+            Tuple of (institution_name, account_type)
+        """
+        headers_lower = [h.lower().strip() for h in headers]
+        headers_str = ' '.join(headers_lower)
+
+        # Chase CSV: "Transaction Date", "Post Date", "Description", "Category", "Type", "Amount", "Memo"
+        if 'post date' in headers_lower and 'memo' in headers_lower:
+            return ('Chase', 'CREDIT_CARD')
+
+        # Amex CSV: "Date", "Description", "Amount", "Extended Details", ...
+        if 'extended details' in headers_lower:
+            return ('American Express', 'CREDIT_CARD')
+
+        # Capital One CSV: "Transaction Date", "Posted Date", "Card No.", "Description", "Category", "Debit", "Credit"
+        if 'card no.' in headers_lower or 'card no' in headers_lower:
+            return ('Capital One', 'CREDIT_CARD')
+
+        # Wells Fargo CSV
+        if 'ref #' in headers_lower or 'reference number' in headers_lower:
+            return ('Wells Fargo', 'CREDIT_CARD')
+
+        # Bank of America CSV
+        if 'running bal.' in headers_lower or 'running balance' in headers_lower:
+            return ('Bank of America', 'CHECKING')
+
+        # Ally Bank CSV
+        if 'ending balance' in headers_lower and 'transaction id' in headers_lower:
+            return ('Ally Bank', 'CHECKING')
+
+        # Fidelity CSV
+        if 'run date' in headers_lower or 'trade date' in headers_lower:
+            return ('Fidelity', 'CREDIT_CARD')
+
+        # Citi CSV
+        if 'member name' in headers_lower or 'billing date' in headers_lower:
+            return ('Citi', 'CREDIT_CARD')
+
+        # Discover CSV
+        if 'trans. date' in headers_lower or 'trans date' in headers_lower:
+            return ('Discover', 'CREDIT_CARD')
+
+        return (None, None)
 
     def parse(self) -> ParseResult:
         """Parse CSV file and return transactions."""
@@ -39,6 +91,10 @@ class CSVParser(BaseParser):
         try:
             # Read CSV file
             self.df = pd.read_csv(self.file_path, encoding='utf-8-sig')
+
+            # Detect bank from headers
+            headers = self.df.columns.tolist()
+            self.detected_bank, self.detected_account_type = self._detect_csv_bank(headers)
 
             # Detect or apply column mapping
             if not self.column_mapping:
@@ -55,7 +111,9 @@ class CSVParser(BaseParser):
                     transactions=[],
                     errors=validation_errors,
                     warnings=warnings,
-                    metadata={}
+                    metadata={},
+                    detected_institution=self.detected_bank,
+                    detected_account_type=self.detected_account_type
                 )
 
             # Normalize amounts
@@ -73,7 +131,9 @@ class CSVParser(BaseParser):
                     'total_rows': len(self.df),
                     'column_mapping': self.column_mapping,
                     'amount_convention': self.amount_convention,
-                }
+                },
+                detected_institution=self.detected_bank,
+                detected_account_type=self.detected_account_type
             )
 
         except Exception as e:
@@ -83,7 +143,9 @@ class CSVParser(BaseParser):
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={}
+                metadata={},
+                detected_institution=self.detected_bank,
+                detected_account_type=self.detected_account_type
             )
 
     def detect_format(self) -> Dict[str, Any]:

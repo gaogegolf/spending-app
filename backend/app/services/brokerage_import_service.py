@@ -27,6 +27,7 @@ from app.services.file_parser.fidelity_brokerage_parser import FidelityBrokerage
 from app.services.file_parser.schwab_brokerage_parser import SchwabBrokerageParser
 from app.services.file_parser.ibkr_brokerage_parser import IBKRBrokerageParser
 from app.services.file_parser.vanguard_brokerage_parser import VanguardBrokerageParser
+from app.services.file_parser.wealthfront_brokerage_parser import WealthfrontBrokerageParser
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ class BrokerageImportService:
             os.remove(temp_path)
             raise ValueError(
                 "Could not detect brokerage provider. "
-                "Currently supported: Fidelity, Schwab, Interactive Brokers (IBKR), Vanguard"
+                "Currently supported: Fidelity, Schwab, Interactive Brokers (IBKR), Vanguard, Wealthfront"
             )
 
         # Create import record
@@ -1022,6 +1023,8 @@ class BrokerageImportService:
             return IBKRBrokerageParser(file_path)
         elif provider == "vanguard":
             return VanguardBrokerageParser(file_path)
+        elif provider == "wealthfront":
+            return WealthfrontBrokerageParser(file_path)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
 

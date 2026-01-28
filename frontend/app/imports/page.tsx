@@ -28,6 +28,22 @@ const BROKERAGE_ACCOUNT_TYPES: AccountType[] = ['BROKERAGE', 'IRA_ROTH', 'IRA_TR
 
 type ImportType = 'transactions' | 'brokerage';
 
+// Transaction parse result with detection info
+interface TransactionParseResult {
+  success: boolean;
+  import_id: string;
+  filename: string;
+  source_type: string;
+  detected_columns: any;
+  transactions_preview: any[];
+  total_count: number;
+  duplicate_count: number;
+  warnings: string[];
+  errors?: string[];
+  detected_institution: string | null;
+  detected_account_type: string | null;
+}
+
 export default function ImportsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccount, setSelectedAccount] = useState<string>('');
@@ -40,6 +56,11 @@ export default function ImportsPage() {
 
   // Import type selection
   const [importType, setImportType] = useState<ImportType>('transactions');
+
+  // Auto-detect mode (for transactions)
+  const [autoDetectMode, setAutoDetectMode] = useState(true);
+  const [transactionParseResult, setTransactionParseResult] = useState<TransactionParseResult | null>(null);
+  const [transactionImportId, setTransactionImportId] = useState<string | null>(null);
 
   // Brokerage import state
   const [brokerageParseResult, setBrokerageParseResult] = useState<BrokerageParseResult | null>(null);
@@ -115,10 +136,16 @@ export default function ImportsPage() {
     }
   }
 
-  // Handle transaction import (existing flow)
+  // Handle transaction import with auto-detect support
   async function handleTransactionImport() {
-    if (!selectedAccount || files.length === 0) {
-      setError('Please select an account and at least one file');
+    if (files.length === 0) {
+      setError('Please select at least one file');
+      return;
+    }
+
+    // In non-auto-detect mode, require account selection
+    if (!autoDetectMode && !selectedAccount) {
+      setError('Please select an account');
       return;
     }
 
@@ -128,6 +155,27 @@ export default function ImportsPage() {
       setImportRecords([]);
       setStep('upload');
 
+      // For auto-detect mode with single file, show preview
+      if (autoDetectMode && files.length === 1) {
+        const file = files[0];
+        const uploadResult = await uploadFile(null, file); // Upload without account
+        setTransactionImportId(uploadResult.id);
+
+        setStep('processing');
+        const parseResult = await parseImport(uploadResult.id) as TransactionParseResult;
+
+        if (parseResult.success === false || parseResult.errors?.length) {
+          setError(parseResult.errors?.join(', ') || 'Failed to parse file');
+          setStep('select');
+          return;
+        }
+
+        setTransactionParseResult(parseResult);
+        setStep('preview');
+        return;
+      }
+
+      // For non-auto-detect mode or multiple files, process directly
       const results: ImportRecord[] = [];
 
       for (let i = 0; i < files.length; i++) {
@@ -135,7 +183,7 @@ export default function ImportsPage() {
         const file = files[i];
 
         try {
-          const uploadResult = await uploadFile(selectedAccount, file);
+          const uploadResult = await uploadFile(autoDetectMode ? null : selectedAccount, file);
           setStep('processing');
           const parseResult = await parseImport(uploadResult.id);
 
@@ -152,7 +200,12 @@ export default function ImportsPage() {
             continue;
           }
 
-          const commitResult = await commitImport(uploadResult.id);
+          // Commit with auto-create if in auto-detect mode
+          const commitResult = await commitImport(uploadResult.id, autoDetectMode ? {
+            createAccount: true
+          } : {
+            accountId: selectedAccount
+          });
           results.push(commitResult);
         } catch (err) {
           results.push({
@@ -176,14 +229,41 @@ export default function ImportsPage() {
     }
   }
 
-  // Handle brokerage import
-  async function handleBrokerageImport() {
-    if (!selectedAccount) {
-      setError('Please select a brokerage account first');
-      return;
+  // Commit transaction import from preview (auto-detect mode)
+  async function handleTransactionCommit() {
+    if (!transactionImportId) return;
+
+    try {
+      setImporting(true);
+      setError(null);
+
+      // If user selected an existing account, use it; otherwise auto-create
+      const commitResult = await commitImport(transactionImportId, selectedAccount ? {
+        accountId: selectedAccount,
+        createAccount: false
+      } : {
+        createAccount: true
+      });
+
+      setImportRecords([commitResult]);
+      setStep('complete');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to commit import');
+    } finally {
+      setImporting(false);
     }
+  }
+
+  // Handle brokerage import with auto-detect support
+  async function handleBrokerageImport() {
     if (files.length === 0) {
       setError('Please select a brokerage statement PDF');
+      return;
+    }
+
+    // In non-auto-detect mode, require account selection
+    if (!autoDetectMode && !selectedAccount) {
+      setError('Please select a brokerage account');
       return;
     }
 
@@ -194,8 +274,8 @@ export default function ImportsPage() {
 
       const file = files[0];
 
-      // Upload and detect provider
-      const uploadResult = await uploadBrokerageStatement(file, selectedAccount);
+      // Upload with optional account (undefined for auto-detect mode)
+      const uploadResult = await uploadBrokerageStatement(file, autoDetectMode ? undefined : selectedAccount);
       setBrokerageImportId(uploadResult.import_id);
 
       // Parse and get preview
@@ -213,15 +293,18 @@ export default function ImportsPage() {
   }
 
   async function handleBrokerageCommit() {
-    if (!brokerageImportId || !selectedAccount) return;
+    if (!brokerageImportId) return;
 
     try {
       setImporting(true);
       setError(null);
 
-      const result = await commitBrokerageImport(brokerageImportId, {
+      // If user selected an existing account, use it; otherwise auto-create
+      const result = await commitBrokerageImport(brokerageImportId, selectedAccount ? {
         accountId: selectedAccount,
         createAccount: false
+      } : {
+        createAccount: true
       });
       setBrokerageResult({
         account_name: result.account_name,
@@ -255,6 +338,8 @@ export default function ImportsPage() {
     setBrokerageParseResult(null);
     setBrokerageImportId(null);
     setBrokerageResult(null);
+    setTransactionParseResult(null);
+    setTransactionImportId(null);
   }
 
   function formatCurrency(value: number): string {
@@ -367,40 +452,97 @@ export default function ImportsPage() {
               {/* Account Selection */}
               <div className="mb-8">
                 <label htmlFor="account" className="block text-base font-semibold text-gray-800 mb-3">
-                  2. Select Account
+                  2. Account
                 </label>
-                <select
-                  id="account"
-                  value={selectedAccount}
-                  onChange={(e) => handleAccountChange(e.target.value)}
-                  className={`block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 text-base transition-all ${
+
+                {/* Auto-detect toggle */}
+                <div className="mb-4 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { setAutoDetectMode(true); setSelectedAccount(''); }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      autoDetectMode
+                        ? importType === 'brokerage'
+                          ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-500'
+                          : 'bg-indigo-100 text-indigo-800 border-2 border-indigo-500'
+                        : 'bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200'
+                    }`}
+                  >
+                    Auto-detect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAutoDetectMode(false)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      !autoDetectMode
+                        ? importType === 'brokerage'
+                          ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-500'
+                          : 'bg-indigo-100 text-indigo-800 border-2 border-indigo-500'
+                        : 'bg-gray-100 text-gray-600 border-2 border-transparent hover:bg-gray-200'
+                    }`}
+                  >
+                    Choose account
+                  </button>
+                </div>
+
+                {/* Show auto-detect info or account selector */}
+                {autoDetectMode ? (
+                  <div className={`rounded-lg p-4 ${
                     importType === 'brokerage'
-                      ? 'focus:ring-emerald-500 focus:border-emerald-500'
-                      : 'focus:ring-indigo-500 focus:border-indigo-500'
-                  }`}
-                  required
-                >
-                  <option value="">Choose an account...</option>
-                  {importType === 'transactions'
-                    ? accounts.filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name} ({account.account_type.replace('_', ' ')})
-                        </option>
-                      ))
-                    : accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name} ({account.account_type.replace('_', ' ')})
-                        </option>
-                      ))
-                  }
-                  <option value="__new__" className={importType === 'brokerage' ? 'font-semibold text-emerald-600' : 'font-semibold text-indigo-600'}>
-                    + Create New Account
-                  </option>
-                </select>
-                {importType === 'brokerage' && accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).length === 0 && (
-                  <p className="mt-2 text-sm text-amber-600">
-                    No brokerage accounts yet. Create one first to import statements.
-                  </p>
+                      ? 'bg-emerald-50 border border-emerald-200'
+                      : 'bg-indigo-50 border border-indigo-200'
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">🔍</span>
+                      <div>
+                        <p className={`font-medium ${importType === 'brokerage' ? 'text-emerald-900' : 'text-indigo-900'}`}>
+                          {importType === 'brokerage' ? 'Auto-detect provider & account' : 'Auto-detect bank & account'}
+                        </p>
+                        <p className={`text-sm mt-1 ${importType === 'brokerage' ? 'text-emerald-700' : 'text-indigo-700'}`}>
+                          {importType === 'brokerage'
+                            ? "We'll automatically detect your brokerage from the statement and create an account for you. Supports Fidelity and Schwab."
+                            : "We'll automatically detect your bank from the statement and create an account for you. Supports Chase, Amex, Wells Fargo, Capital One, Ally Bank, Fidelity, and more."
+                          }
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      id="account"
+                      value={selectedAccount}
+                      onChange={(e) => handleAccountChange(e.target.value)}
+                      className={`block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 text-base transition-all ${
+                        importType === 'brokerage'
+                          ? 'focus:ring-emerald-500 focus:border-emerald-500'
+                          : 'focus:ring-indigo-500 focus:border-indigo-500'
+                      }`}
+                      required={importType === 'brokerage' || !autoDetectMode}
+                    >
+                      <option value="">Choose an account...</option>
+                      {importType === 'transactions'
+                        ? accounts.filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name} ({account.account_type.replace('_', ' ')})
+                            </option>
+                          ))
+                        : accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.name} ({account.account_type.replace('_', ' ')})
+                            </option>
+                          ))
+                      }
+                      <option value="__new__" className={importType === 'brokerage' ? 'font-semibold text-emerald-600' : 'font-semibold text-indigo-600'}>
+                        + Create New Account
+                      </option>
+                    </select>
+                    {importType === 'brokerage' && accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).length === 0 && (
+                      <p className="mt-2 text-sm text-amber-600">
+                        No brokerage accounts yet. Create one first to import statements.
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -450,7 +592,12 @@ export default function ImportsPage() {
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={importing || !selectedAccount || files.length === 0}
+                disabled={
+                  importing ||
+                  files.length === 0 ||
+                  (importType === 'brokerage' && !selectedAccount) ||
+                  (importType === 'transactions' && !autoDetectMode && !selectedAccount)
+                }
                 className={`w-full flex justify-center items-center py-4 px-6 border border-transparent rounded-lg shadow-lg text-base font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all transform hover:scale-105 ${
                   importType === 'brokerage'
                     ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 focus:ring-emerald-500'
@@ -467,7 +614,9 @@ export default function ImportsPage() {
                     <span className="mr-2">{importType === 'brokerage' ? '📈' : '🚀'}</span>
                     {importType === 'brokerage'
                       ? 'Import Brokerage Statement'
-                      : files.length > 0 ? `Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Import Transactions'
+                      : autoDetectMode
+                        ? (files.length > 0 ? `Auto Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Auto Import')
+                        : (files.length > 0 ? `Import ${files.length} File${files.length !== 1 ? 's' : ''}` : 'Import Transactions')
                     }
                   </>
                 )}
@@ -507,6 +656,136 @@ export default function ImportsPage() {
                 </p>
               )}
               <p className="text-sm text-gray-500 mt-4">This may take a moment...</p>
+            </div>
+          </div>
+        )}
+
+        {/* Transaction Preview Step (Auto-detect mode) */}
+        {step === 'preview' && transactionParseResult && (
+          <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Review Import</h2>
+
+            {/* Detection Summary */}
+            <div className="bg-indigo-50 rounded-xl p-5 mb-6 border border-indigo-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  {transactionParseResult.detected_institution ? (
+                    <>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xl">🔍</span>
+                        <span className="text-sm text-indigo-600 font-medium">Detected</span>
+                      </div>
+                      <p className="font-semibold text-indigo-800 text-lg">
+                        {transactionParseResult.detected_institution} {transactionParseResult.detected_account_type?.replace('_', ' ')}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="font-semibold text-gray-800 text-lg">
+                      Unknown Institution
+                    </p>
+                  )}
+                  <p className="text-sm text-indigo-600 mt-1">
+                    {transactionParseResult.filename}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-3xl font-bold text-indigo-800">
+                    {transactionParseResult.total_count}
+                  </p>
+                  <p className="text-sm text-indigo-600">transactions</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Warnings */}
+            {transactionParseResult.warnings && transactionParseResult.warnings.length > 0 && (
+              <div className="bg-amber-50 rounded-lg p-4 mb-6 border border-amber-200">
+                <p className="font-semibold text-amber-800 mb-2">Warnings</p>
+                {transactionParseResult.warnings.map((warning, i) => (
+                  <p key={i} className="text-sm text-amber-700">{warning}</p>
+                ))}
+              </div>
+            )}
+
+            {/* Transaction Preview */}
+            <div className="border rounded-xl overflow-hidden mb-6">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Date</th>
+                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Description</th>
+                    <th className="text-right px-4 py-3 font-semibold text-gray-700">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {transactionParseResult.transactions_preview.slice(0, 10).map((txn, i) => (
+                    <tr key={i} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-gray-600">{txn.date}</td>
+                      <td className="px-4 py-3 text-gray-900 truncate max-w-[300px]">
+                        {txn.description_raw || txn.merchant_normalized}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900">
+                        {formatCurrency(txn.amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {transactionParseResult.transactions_preview.length > 10 && (
+                <div className="bg-gray-50 px-4 py-2 text-sm text-gray-500 text-center border-t">
+                  + {transactionParseResult.total_count - 10} more transactions
+                </div>
+              )}
+            </div>
+
+            {/* Account Selection Override */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Import to account (optional - leave blank to auto-create)
+              </label>
+              <select
+                value={selectedAccount}
+                onChange={(e) => setSelectedAccount(e.target.value)}
+                className="block w-full px-4 py-3 border-2 border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base"
+              >
+                <option value="">Auto-create new account</option>
+                {accounts.filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.name} ({account.account_type.replace('_', ' ')})
+                  </option>
+                ))}
+              </select>
+              {!selectedAccount && transactionParseResult.detected_institution && (
+                <p className="mt-2 text-sm text-gray-500">
+                  Will create: {transactionParseResult.detected_institution} {transactionParseResult.detected_account_type?.replace('_', ' ')}
+                </p>
+              )}
+            </div>
+
+            {/* Duplicate Info */}
+            {transactionParseResult.duplicate_count > 0 && (
+              <div className="bg-gray-50 rounded-lg p-4 mb-6 border border-gray-200">
+                <p className="text-sm text-gray-600">
+                  <strong>{transactionParseResult.duplicate_count}</strong> duplicate transactions will be skipped
+                </p>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-4">
+              <button
+                onClick={resetImport}
+                className="flex-1 py-3 px-6 border-2 border-gray-300 rounded-lg text-base font-semibold text-gray-700 bg-white hover:bg-gray-50 transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTransactionCommit}
+                disabled={importing}
+                className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-400 transition-all"
+              >
+                {importing ? 'Importing...' : 'Confirm Import'}
+              </button>
             </div>
           </div>
         )}
@@ -590,6 +869,30 @@ export default function ImportsPage() {
               )}
             </div>
 
+            {/* Account Selection Override */}
+            {autoDetectMode && (
+              <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Import to account
+                </label>
+                <select
+                  value={selectedAccount}
+                  onChange={(e) => setSelectedAccount(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-base"
+                >
+                  <option value="">Auto-create: {brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)} {getAccountTypeLabel(brokerageParseResult.account_type)}</option>
+                  {accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name} ({account.institution || 'No institution'})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-2">
+                  Leave as auto-create or select an existing account to add positions to
+                </p>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex gap-4">
               <button
@@ -633,6 +936,11 @@ export default function ImportsPage() {
                   <div className="flex justify-between items-start mb-3">
                     <div className="flex-1">
                       <div className="font-semibold text-gray-900 mb-1">{record.filename}</div>
+                      {record.account_name && (
+                        <div className="text-sm text-indigo-600 font-medium mb-1">
+                          → {record.account_name}
+                        </div>
+                      )}
                       <div className={`text-sm font-medium ${
                         record.status === 'FAILED' ? 'text-red-600' : 'text-green-600'
                       }`}>
@@ -683,7 +991,17 @@ export default function ImportsPage() {
                 Import More Files
               </button>
               <a
-                href="/transactions"
+                href={(() => {
+                  // If all imports went to the same account, filter by it
+                  const accountIds = importRecords
+                    .filter(r => r.status !== 'FAILED' && r.account_id)
+                    .map(r => r.account_id);
+                  const uniqueAccountIds = [...new Set(accountIds)];
+                  if (uniqueAccountIds.length === 1 && uniqueAccountIds[0]) {
+                    return `/transactions?account_id=${uniqueAccountIds[0]}`;
+                  }
+                  return '/transactions';
+                })()}
                 className="flex-1 py-3 px-6 border border-transparent rounded-lg text-base font-semibold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-center transition-all"
               >
                 View Transactions

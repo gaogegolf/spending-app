@@ -378,8 +378,9 @@ class FidelityBrokerageParser(BaseBrokerageParser):
         lines = section_text.split('\n')
 
         # Pattern for holdings lines with multiple numbers
+        # Security name may include symbol in parentheses like "TESLA INC COM (TSLA)"
         holdings_pattern = re.compile(
-            r'^([A-Z][A-Z0-9\s&\'\-]+?)\s+'
+            r'^([A-Z][A-Z0-9\s&\'\-]+(?:\s*\([A-Z]{1,5}\))?)\s+'
             r'\$?([\d,]+\.?\d{0,2})\s+'
             r'([\d,]+\.?\d{0,4})\s+'
             r'\$?([\d,]+\.?\d{0,4})\s+'
@@ -402,14 +403,22 @@ class FidelityBrokerageParser(BaseBrokerageParser):
             if match:
                 security_name = match.group(1).strip()
 
+                # First, check if symbol is embedded in the security name
                 symbol = None
-                for j in range(1, 3):
-                    if i + j < len(lines):
-                        next_line = lines[i + j].strip()
-                        symbol_match = symbol_pattern.search(next_line)
-                        if symbol_match:
-                            symbol = symbol_match.group(1)
-                            break
+                embedded_symbol = symbol_pattern.search(security_name)
+                if embedded_symbol:
+                    symbol = embedded_symbol.group(1)
+                    # Remove symbol from security name for cleaner display
+                    security_name = re.sub(r'\s*\([A-Z]{1,5}\)\s*', '', security_name).strip()
+                else:
+                    # Check next 2 lines for symbol
+                    for j in range(1, 3):
+                        if i + j < len(lines):
+                            next_line = lines[i + j].strip()
+                            symbol_match = symbol_pattern.search(next_line)
+                            if symbol_match:
+                                symbol = symbol_match.group(1)
+                                break
 
                 try:
                     quantity = Decimal(match.group(3).replace(",", ""))
@@ -832,8 +841,9 @@ class FidelityBrokerageParser(BaseBrokerageParser):
 
         # Pattern for holdings lines with multiple numbers
         # Name followed by Beginning Value, Quantity, Price, Ending Value, Cost Basis, Gain/Loss
+        # Security name may include symbol in parentheses like "TESLA INC COM (TSLA)"
         holdings_pattern = re.compile(
-            r'^([A-Z][A-Z0-9\s&\'\-]+?)\s+'  # Security name (all caps, may include numbers like S&P 500)
+            r'^([A-Z][A-Z0-9\s&\'\-]+(?:\s*\([A-Z]{1,5}\))?)\s+'  # Security name (may include symbol in parens)
             r'\$?([\d,]+\.?\d{0,2})\s+'    # Beginning market value
             r'([\d,]+\.?\d{0,4})\s+'       # Quantity (can have 4 decimals)
             r'\$?([\d,]+\.?\d{0,4})\s+'    # Price per unit
@@ -865,15 +875,22 @@ class FidelityBrokerageParser(BaseBrokerageParser):
             if match:
                 security_name = match.group(1).strip()
 
-                # Check next 2 lines for symbol (sometimes there's "USD" before symbol)
+                # First, check if symbol is embedded in the security name (e.g., "TESLA INC COM (TSLA)")
                 symbol = None
-                for j in range(1, 3):
-                    if i + j < len(lines):
-                        next_line = lines[i + j].strip()
-                        symbol_match = symbol_pattern.search(next_line)
-                        if symbol_match:
-                            symbol = symbol_match.group(1)
-                            break
+                embedded_symbol = symbol_pattern.search(security_name)
+                if embedded_symbol:
+                    symbol = embedded_symbol.group(1)
+                    # Remove symbol from security name for cleaner display
+                    security_name = re.sub(r'\s*\([A-Z]{1,5}\)\s*', '', security_name).strip()
+                else:
+                    # Check next 2 lines for symbol (sometimes there's "USD" before symbol)
+                    for j in range(1, 3):
+                        if i + j < len(lines):
+                            next_line = lines[i + j].strip()
+                            symbol_match = symbol_pattern.search(next_line)
+                            if symbol_match:
+                                symbol = symbol_match.group(1)
+                                break
 
                 try:
                     quantity = Decimal(match.group(3).replace(",", ""))

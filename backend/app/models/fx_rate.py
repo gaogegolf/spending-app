@@ -13,7 +13,7 @@ class FxRate(Base):
     __tablename__ = "fx_rates"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    snapshot_id = Column(String(36), ForeignKey("holdings_snapshots.id", ondelete="CASCADE"), nullable=False)
+    snapshot_id = Column(String(36), ForeignKey("holdings_snapshots.id", ondelete="CASCADE"), nullable=True)  # Nullable for standalone API-fetched rates
 
     # Currency pair
     from_currency = Column(String(3), nullable=False)  # e.g., "EUR"

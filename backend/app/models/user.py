@@ -1,6 +1,7 @@
 """User model for authentication."""
 
 from sqlalchemy import Column, String, DateTime, Boolean
+from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
@@ -25,6 +26,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login_at = Column(DateTime)
+
+    # Relationships
+    pending_imports = relationship("ImportRecord", back_populates="user")
 
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', username='{self.username}')>"

@@ -128,6 +128,17 @@ def detect_brokerage_provider(text: str) -> Optional[str]:
     if any(ind in text_lower for ind in equatex_indicators):
         return "equatex"
 
+    # Wealthfront indicators
+    wealthfront_indicators = [
+        "wealthfront",
+        "wealthfront brokerage llc",
+        "monthly statement for",
+        "261 hamilton ave",
+        "support@wealthfront.com",
+    ]
+    if any(ind in text_lower for ind in wealthfront_indicators):
+        return "wealthfront"
+
     return None
 
 

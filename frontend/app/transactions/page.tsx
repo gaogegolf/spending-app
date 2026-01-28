@@ -18,6 +18,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
+// Brokerage accounts don't have transactions - they have positions
+const BROKERAGE_ACCOUNT_TYPES = ['BROKERAGE', 'IRA_ROTH', 'IRA_TRADITIONAL', 'RETIREMENT_401K', 'STOCK_PLAN'];
+
 export default function TransactionsPage() {
   const searchParams = useSearchParams();
 
@@ -823,11 +826,13 @@ export default function TransactionsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Accounts</SelectItem>
-                    {accounts.map((account) => (
-                      <SelectItem key={account.id} value={account.id}>
-                        {account.name}
-                      </SelectItem>
-                    ))}
+                    {accounts
+                      .filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type))
+                      .map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

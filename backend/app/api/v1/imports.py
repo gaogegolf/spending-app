@@ -1,6 +1,6 @@
 """Imports API endpoints."""
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
@@ -22,34 +22,35 @@ router = APIRouter()
 
 @router.post("/imports/upload", response_model=ImportStatusResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
-    account_id: str = Form(...),
     file: UploadFile = File(...),
+    account_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """Upload a CSV or PDF file for import.
 
     Args:
-        account_id: Account ID to associate with import
         file: Uploaded file (CSV or PDF)
+        account_id: Account ID to associate with import (optional, for auto-detect mode)
         current_user: Authenticated user
         db: Database session
 
     Returns:
         Import record with PENDING status
     """
-    # Verify account belongs to user
-    account = db.query(Account).filter(
-        Account.id == account_id,
-        Account.user_id == current_user.id
-    ).first()
-    if not account:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Account not found"
-        )
+    # If account_id provided, verify it belongs to user
+    if account_id:
+        account = db.query(Account).filter(
+            Account.id == account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Account not found"
+            )
 
-    import_service = ImportService(db)
+    import_service = ImportService(db, current_user.id)
 
     try:
         import_record = await import_service.process_upload(file, account_id)
@@ -81,20 +82,37 @@ async def parse_file(
         db: Database session
 
     Returns:
-        Preview with transactions, detected columns, duplicate count
+        Preview with transactions, detected columns, duplicate count, detected institution
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # Handle imports with or without account (left outer join for pending imports)
+    import_record = db.query(ImportRecord).outerjoin(Account).filter(
+        ImportRecord.id == import_id
     ).first()
+
     if not import_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
         )
 
-    import_service = ImportService(db)
+    # Verify ownership: either through account or through user_id on import
+    if import_record.account_id:
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
+    elif import_record.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    import_service = ImportService(db, current_user.id)
 
     try:
         preview = await import_service.parse_file(import_id)
@@ -120,6 +138,9 @@ async def parse_file(
 @router.post("/imports/{import_id}/commit", response_model=ImportStatusResponse)
 async def commit_import(
     import_id: str,
+    account_id: Optional[str] = Form(None),
+    create_account: bool = Form(True),
+    account_name: Optional[str] = Form(None),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -127,28 +148,86 @@ async def commit_import(
 
     Args:
         import_id: Import record ID
+        account_id: Account ID to use (optional, overrides detected account)
+        create_account: If True and no account_id, auto-create account from detection
+        account_name: Custom name for auto-created account (optional)
         current_user: Authenticated user
         db: Database session
 
     Returns:
         Import record with SUCCESS/PARTIAL/FAILED status
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # Handle imports with or without account
+    import_record = db.query(ImportRecord).outerjoin(Account).filter(
+        ImportRecord.id == import_id
     ).first()
+
     if not import_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
         )
 
-    import_service = ImportService(db)
+    # Verify ownership
+    if import_record.account_id:
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
+    elif import_record.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    # If account_id provided, verify it belongs to user
+    if account_id:
+        account = db.query(Account).filter(
+            Account.id == account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Specified account not found"
+            )
+
+    import_service = ImportService(db, current_user.id)
 
     try:
-        import_record = await import_service.commit_import(import_id)
-        return import_record
+        import_record = await import_service.commit_import(
+            import_id,
+            account_id=account_id,
+            create_account=create_account,
+            account_name=account_name
+        )
+
+        # Look up account name for response
+        acct_name = None
+        if import_record.account_id:
+            acct = db.query(Account).filter(Account.id == import_record.account_id).first()
+            if acct:
+                acct_name = acct.name
+
+        return ImportStatusResponse(
+            id=import_record.id,
+            account_id=import_record.account_id,
+            account_name=acct_name,
+            user_id=import_record.user_id,
+            source_type=import_record.source_type,
+            filename=import_record.filename,
+            status=import_record.status,
+            error_message=import_record.error_message,
+            transactions_imported=import_record.transactions_imported,
+            transactions_duplicate=import_record.transactions_duplicate,
+            created_at=import_record.created_at,
+            completed_at=import_record.completed_at,
+        )
 
     except ValueError as e:
         raise HTTPException(
@@ -178,13 +257,29 @@ def get_import_status(
     Returns:
         Import record details
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # Handle imports with or without account
+    import_record = db.query(ImportRecord).outerjoin(Account).filter(
+        ImportRecord.id == import_id
     ).first()
 
     if not import_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    # Verify ownership
+    if import_record.account_id:
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
+    elif import_record.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
@@ -209,8 +304,15 @@ def list_imports(
     Returns:
         List of import records
     """
-    # Only list user's imports via Account join
-    query = db.query(ImportRecord).join(Account).filter(Account.user_id == current_user.id)
+    from sqlalchemy import or_
+
+    # List user's imports - either via account ownership or direct user_id
+    query = db.query(ImportRecord).outerjoin(Account).filter(
+        or_(
+            Account.user_id == current_user.id,
+            ImportRecord.user_id == current_user.id
+        )
+    )
 
     if account_id:
         query = query.filter(ImportRecord.account_id == account_id)
@@ -236,18 +338,35 @@ async def delete_import(
         current_user: Authenticated user
         db: Database session
     """
-    # Verify import belongs to user via Account join
-    import_record = db.query(ImportRecord).join(Account).filter(
-        ImportRecord.id == import_id,
-        Account.user_id == current_user.id
+    # Handle imports with or without account
+    import_record = db.query(ImportRecord).outerjoin(Account).filter(
+        ImportRecord.id == import_id
     ).first()
+
     if not import_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Import {import_id} not found"
         )
 
-    import_service = ImportService(db)
+    # Verify ownership
+    if import_record.account_id:
+        account = db.query(Account).filter(
+            Account.id == import_record.account_id,
+            Account.user_id == current_user.id
+        ).first()
+        if not account:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Import {import_id} not found"
+            )
+    elif import_record.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Import {import_id} not found"
+        )
+
+    import_service = ImportService(db, current_user.id)
 
     try:
         await import_service.delete_import(import_id)
