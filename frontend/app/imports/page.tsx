@@ -980,6 +980,25 @@ export default function ImportsPage() {
               </p>
             </div>
 
+            {/* Quarantine Warning */}
+            {importRecords.some(r => (r.transactions_quarantined || 0) > 0) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+                <p className="text-amber-800 font-medium mb-2">
+                  Some transactions need review
+                </p>
+                <p className="text-amber-700 text-sm mb-3">
+                  {importRecords.reduce((sum, r) => sum + (r.transactions_quarantined || 0), 0)} transactions
+                  couldn&apos;t be imported and are waiting for your review.
+                </p>
+                <a
+                  href="/quarantine"
+                  className="inline-flex items-center px-3 py-1.5 border border-amber-300 rounded-md text-sm font-medium text-amber-800 bg-white hover:bg-amber-100 transition-colors"
+                >
+                  Review Quarantined Transactions
+                </a>
+              </div>
+            )}
+
             {/* Import Summary */}
             <div className="space-y-4 mb-8">
               {importRecords.map((record, index) => (
@@ -1011,7 +1030,14 @@ export default function ImportsPage() {
                     <div className="text-sm text-red-700 mt-2">Error: {record.error_message}</div>
                   )}
                   {record.status !== 'FAILED' && (
-                    <div className="text-sm text-gray-600">{record.transactions_duplicate} duplicates skipped</div>
+                    <div className="flex items-center gap-3 text-sm text-gray-600">
+                      <span>{record.transactions_duplicate} duplicates skipped</span>
+                      {(record.transactions_quarantined || 0) > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                          {record.transactions_quarantined} quarantined
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               ))}
@@ -1019,7 +1045,7 @@ export default function ImportsPage() {
 
             {/* Total Summary */}
             <div className="border-t border-gray-200 pt-6 mb-6">
-              <div className="grid grid-cols-2 gap-4 text-center">
+              <div className={`grid gap-4 text-center ${importRecords.reduce((sum, r) => sum + (r.transactions_quarantined || 0), 0) > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <div>
                   <div className="text-3xl font-bold text-green-600">
                     {importRecords.reduce((sum, r) => sum + r.transactions_imported, 0)}
@@ -1032,6 +1058,14 @@ export default function ImportsPage() {
                   </div>
                   <div className="text-sm text-gray-600 mt-1">Total Duplicates</div>
                 </div>
+                {importRecords.reduce((sum, r) => sum + (r.transactions_quarantined || 0), 0) > 0 && (
+                  <div>
+                    <div className="text-3xl font-bold text-amber-600">
+                      {importRecords.reduce((sum, r) => sum + (r.transactions_quarantined || 0), 0)}
+                    </div>
+                    <div className="text-sm text-gray-600 mt-1">Total Quarantined</div>
+                  </div>
+                )}
               </div>
             </div>
 
