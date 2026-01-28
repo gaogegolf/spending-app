@@ -13,6 +13,7 @@ class QuarantinedTransactionResponse(BaseModel):
     id: str
     import_id: str
     account_id: Optional[str] = None
+    account_name: Optional[str] = None
     user_id: str
 
     raw_data: Dict[str, Any]
@@ -26,6 +27,9 @@ class QuarantinedTransactionResponse(BaseModel):
     created_at: datetime
     resolved_at: Optional[datetime] = None
 
+    # Convenience fields for display
+    import_filename: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -35,6 +39,7 @@ class QuarantineListResponse(BaseModel):
 
     items: list[QuarantinedTransactionResponse]
     total: int
+    pending_count: int
 
 
 class QuarantineUpdateRequest(BaseModel):
