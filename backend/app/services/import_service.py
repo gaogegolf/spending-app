@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 from app.models.import_record import ImportRecord, SourceType, ImportStatus
 from app.models.transaction import Transaction
 from app.models.account import Account
+from app.models.quarantined_transaction import QuarantineErrorType
+from app.services.quarantine_service import create_quarantine_item
 from app.services.file_parser.csv_parser import CSVParser
 from app.services.file_parser.pdf_parser import PDFParser
 from app.services.classifier.llm_classifier import LLMClassifier
@@ -465,14 +467,35 @@ class ImportService:
 
             successfully_inserted = 0
             duplicate_count = 0
+            quarantine_count = 0
             seen_hashes = set()  # Track hashes within this batch to avoid within-batch duplicates
 
-            for classified_data in all_classified:
+            for i, classified_data in enumerate(all_classified):
                 # Each classified_data now contains the original transaction data
                 # (rule_matched uses txn_data.copy(), learned uses **txn, llm now merges too)
                 # No need to look up new_txns[i] - indices wouldn't match anyway since
                 # all_classified = rule_matched + learned + llm, which are built from
                 # different subsets of new_txns
+
+                # Get row_index from classified_data if available, otherwise use loop index
+                row_index = classified_data.get('row_index', i + 1)
+
+                # Validate transaction data before creating
+                is_valid, error_msg, error_field = self._validate_transaction_data(classified_data, row_index)
+
+                if not is_valid:
+                    # Quarantine invalid transaction (parse error - bad data format)
+                    logger.warning(f"Quarantining transaction row {row_index}: {error_msg}")
+                    create_quarantine_item(
+                        db=self.db,
+                        import_record=import_record,
+                        raw_data=classified_data,
+                        error_type=QuarantineErrorType.PARSE_ERROR,
+                        error_message=error_msg,
+                        error_field=error_field,
+                    )
+                    quarantine_count += 1
+                    continue
 
                 # Generate hash for deduplication using file_hash + row_index
                 txn_hash = self.dedup_service.generate_hash(import_record.account_id, file_hash, classified_data)
@@ -516,26 +539,35 @@ class ImportService:
                 if 'fx_rate_date' in merged_data and isinstance(merged_data['fx_rate_date'], str):
                     merged_data['fx_rate_date'] = datetime.fromisoformat(merged_data['fx_rate_date']).date()
 
-                transaction = Transaction(
-                    account_id=import_record.account_id,
-                    import_id=import_record.id,
-                    hash_dedup_key=txn_hash,
-                    **merged_data
-                )
-
-                # Ensure is_spend and is_income are set based on transaction_type
-                transaction.set_is_spend_based_on_type()
-
-                # Insert immediately with error handling
                 try:
+                    transaction = Transaction(
+                        account_id=import_record.account_id,
+                        import_id=import_record.id,
+                        hash_dedup_key=txn_hash,
+                        **merged_data
+                    )
+
+                    # Ensure is_spend and is_income are set based on transaction_type
+                    transaction.set_is_spend_based_on_type()
+
+                    # Insert immediately with error handling
                     self.db.add(transaction)
                     self.db.flush()  # Flush to detect constraint violations immediately
                     seen_hashes.add(txn_hash)  # Mark as seen after successful flush
                     successfully_inserted += 1
                 except Exception as e:
-                    logger.warning(f"Failed to insert transaction (constraint violation): {str(e)}")
+                    logger.warning(f"Quarantining transaction row {row_index}: Failed to create - {str(e)}")
                     self.db.rollback()  # Rollback to recover from error
-                    duplicate_count += 1
+                    # Quarantine on any creation error (validation error - DB constraint, etc.)
+                    create_quarantine_item(
+                        db=self.db,
+                        import_record=import_record,
+                        raw_data=classified_data,
+                        error_type=QuarantineErrorType.VALIDATION_ERROR,
+                        error_message=f"Failed to create transaction: {str(e)}",
+                        error_field=None,
+                    )
+                    quarantine_count += 1
 
             self.db.commit()
 
@@ -567,6 +599,8 @@ class ImportService:
             import_record.status = ImportStatus.SUCCESS
             import_record.transactions_imported = successfully_inserted
             import_record.transactions_duplicate = duplicate_count
+            import_record.transactions_quarantined = quarantine_count
+            import_record.quarantine_resolved = (quarantine_count == 0)
             import_record.completed_at = datetime.utcnow()
             self.db.commit()
 
@@ -577,6 +611,51 @@ class ImportService:
             import_record.error_message = str(e)
             self.db.commit()
             raise
+
+    def _validate_transaction_data(self, txn_data: dict, row_index: int) -> tuple[bool, str, str]:
+        """Validate a single transaction's data.
+
+        Args:
+            txn_data: Transaction data dict
+            row_index: Row number for error reporting
+
+        Returns:
+            Tuple of (is_valid, error_message, error_field)
+        """
+        # Check required fields
+        if not txn_data.get('date'):
+            return False, f"Row {row_index}: Missing date", "date"
+
+        if txn_data.get('amount') is None:
+            return False, f"Row {row_index}: Missing amount", "amount"
+
+        # Validate date format
+        date_val = txn_data.get('date')
+        if date_val:
+            try:
+                if isinstance(date_val, str):
+                    # Try to parse common formats
+                    parsed = None
+                    for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d/%m/%Y']:
+                        try:
+                            parsed = datetime.strptime(date_val, fmt)
+                            break
+                        except ValueError:
+                            continue
+                    if not parsed:
+                        return False, f"Row {row_index}: Cannot parse date '{date_val}'", "date"
+            except Exception as e:
+                return False, f"Row {row_index}: Invalid date - {e}", "date"
+
+        # Validate amount
+        amount = txn_data.get('amount')
+        if amount is not None:
+            try:
+                float(amount)
+            except (ValueError, TypeError):
+                return False, f"Row {row_index}: Invalid amount '{amount}'", "amount"
+
+        return True, "", ""
 
     def _get_file_path(self, import_record: ImportRecord) -> Path:
         """Get file path for import record."""
