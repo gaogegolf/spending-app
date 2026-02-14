@@ -175,6 +175,31 @@ export async function getTransactions(params?: {
   return response.json();
 }
 
+export async function createTransaction(data: {
+  account_id: string;
+  date: string;
+  description_raw: string;
+  amount: number;
+  transaction_type: string;
+  currency?: string;
+  post_date?: string;
+  merchant_normalized?: string;
+  category?: string;
+  subcategory?: string;
+  tags?: string[];
+  user_note?: string;
+}) {
+  const response = await authFetch(`${API_BASE_URL}/transactions`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  if (response.status === 409) {
+    throw new Error('A transaction with the same account, date, description, and amount already exists');
+  }
+  if (!response.ok) throw new Error('Failed to create transaction');
+  return response.json();
+}
+
 export async function updateTransaction(id: string, data: {
   transaction_type?: string;
   category?: string;
