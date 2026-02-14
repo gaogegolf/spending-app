@@ -62,3 +62,6 @@ backend/db_viewer.py
 backend/db_viewer_cli.py
 backend/view_db.sh
 backend/DB_EXPLORATION.md
+
+# Worktrees
+.worktrees/
