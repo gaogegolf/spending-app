@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions, getMerchantTransactionCount, applyMerchantCategory } from '@/lib/api';
+import { getTransactions, getAccounts, deleteTransaction, bulkDeleteTransactions, reclassifyAllTransactions, updateTransaction, exportTransactions, getMerchantTransactionCount, applyMerchantCategory, createTransaction } from '@/lib/api';
 import { Transaction, Account, TransactionListResponse } from '@/lib/types';
 import { TRANSACTION_TYPES, getCategoriesForType } from '@/lib/categories';
 import { formatDate, compareDates } from '@/lib/dateUtils';
@@ -58,6 +58,23 @@ export default function TransactionsPage() {
     otherCount: number;
   } | null>(null);
   const [applyingMerchant, setApplyingMerchant] = useState(false);
+
+  // Add transaction dialog state
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [addingTransaction, setAddingTransaction] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addForm, setAddForm] = useState({
+    date: new Date().toISOString().split('T')[0],
+    description_raw: '',
+    amount: '',
+    account_id: '',
+    transaction_type: 'EXPENSE' as string,
+    category: '',
+    subcategory: '',
+    merchant_normalized: '',
+    user_note: '',
+    currency: 'USD',
+  });
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -348,6 +365,57 @@ export default function TransactionsPage() {
     setApplyMerchantData(null);
   }
 
+  function resetAddForm() {
+    setAddForm({
+      date: new Date().toISOString().split('T')[0],
+      description_raw: '',
+      amount: '',
+      account_id: '',
+      transaction_type: 'EXPENSE',
+      category: '',
+      subcategory: '',
+      merchant_normalized: '',
+      user_note: '',
+      currency: 'USD',
+    });
+    setAddError(null);
+  }
+
+  async function handleAddTransaction(e: React.FormEvent) {
+    e.preventDefault();
+
+    if (!addForm.date || !addForm.description_raw || !addForm.amount || !addForm.account_id || !addForm.transaction_type) {
+      setAddError('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      setAddingTransaction(true);
+      setAddError(null);
+
+      await createTransaction({
+        account_id: addForm.account_id,
+        date: addForm.date,
+        description_raw: addForm.description_raw,
+        amount: parseFloat(addForm.amount),
+        transaction_type: addForm.transaction_type,
+        currency: addForm.currency || 'USD',
+        category: addForm.category || undefined,
+        subcategory: addForm.subcategory || undefined,
+        merchant_normalized: addForm.merchant_normalized || undefined,
+        user_note: addForm.user_note || undefined,
+      });
+
+      setShowAddDialog(false);
+      resetAddForm();
+      await loadTransactions();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to add transaction');
+    } finally {
+      setAddingTransaction(false);
+    }
+  }
+
   async function handleTypeChange(transactionId: string, newType: string) {
     try {
       setSavingType(true);
@@ -633,6 +701,12 @@ export default function TransactionsPage() {
       <div className="flex items-center justify-between mb-8">
         <h1 className="text-3xl font-bold text-foreground">Transactions</h1>
         <div className="flex items-center gap-3">
+          <Button
+            onClick={() => { resetAddForm(); setShowAddDialog(true); }}
+            variant="default"
+          >
+            + Add Transaction
+          </Button>
           <Button
             onClick={handleExport}
             disabled={exporting}
@@ -1496,6 +1570,188 @@ export default function TransactionsPage() {
               {applyingMerchant ? 'Applying...' : `Apply to ${applyMerchantData?.otherCount || 0} Transaction${(applyMerchantData?.otherCount || 0) !== 1 ? 's' : ''}`}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Transaction Dialog */}
+      <Dialog
+        open={showAddDialog}
+        onOpenChange={(open) => {
+          if (!open && !addingTransaction) {
+            setShowAddDialog(false);
+            resetAddForm();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Add Transaction</DialogTitle>
+            <DialogDescription>
+              Manually add a new transaction to your records.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAddTransaction}>
+            <div className="grid gap-4 py-4">
+              {addError && (
+                <Alert variant="destructive">
+                  <AlertDescription>{addError}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* Date */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-date" className="text-right">Date *</Label>
+                <Input
+                  id="add-date"
+                  type="date"
+                  value={addForm.date}
+                  onChange={(e) => setAddForm({ ...addForm, date: e.target.value })}
+                  className="col-span-3"
+                  required
+                />
+              </div>
+
+              {/* Description */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-desc" className="text-right">Description *</Label>
+                <Input
+                  id="add-desc"
+                  value={addForm.description_raw}
+                  onChange={(e) => setAddForm({ ...addForm, description_raw: e.target.value })}
+                  placeholder="e.g. Coffee at Blue Bottle"
+                  className="col-span-3"
+                  required
+                />
+              </div>
+
+              {/* Amount */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-amount" className="text-right">Amount *</Label>
+                <Input
+                  id="add-amount"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={addForm.amount}
+                  onChange={(e) => setAddForm({ ...addForm, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="col-span-3"
+                  required
+                />
+              </div>
+
+              {/* Account */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-account" className="text-right">Account *</Label>
+                <Select
+                  value={addForm.account_id}
+                  onValueChange={(val) => setAddForm({ ...addForm, account_id: val })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts
+                      .filter(a => !BROKERAGE_ACCOUNT_TYPES.includes(a.account_type))
+                      .map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Type */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-type" className="text-right">Type *</Label>
+                <Select
+                  value={addForm.transaction_type}
+                  onValueChange={(val) => setAddForm({ ...addForm, transaction_type: val, category: '' })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="EXPENSE">Expense</SelectItem>
+                    <SelectItem value="INCOME">Income</SelectItem>
+                    <SelectItem value="TRANSFER">Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Category (optional) */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-category" className="text-right">Category</Label>
+                <Select
+                  value={addForm.category || 'none'}
+                  onValueChange={(val) => setAddForm({ ...addForm, category: val === 'none' ? '' : val })}
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Optional" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {getCategoriesForType(addForm.transaction_type).map((cat) => (
+                      <SelectItem key={cat.id} value={cat.name}>
+                        {cat.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Merchant (optional) */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-merchant" className="text-right">Merchant</Label>
+                <Input
+                  id="add-merchant"
+                  value={addForm.merchant_normalized}
+                  onChange={(e) => setAddForm({ ...addForm, merchant_normalized: e.target.value })}
+                  placeholder="Optional"
+                  className="col-span-3"
+                />
+              </div>
+
+              {/* Note (optional) */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-note" className="text-right">Note</Label>
+                <Input
+                  id="add-note"
+                  value={addForm.user_note}
+                  onChange={(e) => setAddForm({ ...addForm, user_note: e.target.value })}
+                  placeholder="Optional"
+                  className="col-span-3"
+                />
+              </div>
+
+              {/* Currency (optional) */}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="add-currency" className="text-right">Currency</Label>
+                <Input
+                  id="add-currency"
+                  value={addForm.currency}
+                  onChange={(e) => setAddForm({ ...addForm, currency: e.target.value.toUpperCase() })}
+                  placeholder="USD"
+                  maxLength={3}
+                  className="col-span-3"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => { setShowAddDialog(false); resetAddForm(); }}
+                disabled={addingTransaction}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={addingTransaction}>
+                {addingTransaction ? 'Adding...' : 'Add Transaction'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>
