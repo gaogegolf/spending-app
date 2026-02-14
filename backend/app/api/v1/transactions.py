@@ -28,6 +28,82 @@ from app.schemas.transaction import (
 router = APIRouter()
 
 
+@router.post("/transactions", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
+def create_transaction(
+    transaction_data: TransactionCreate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Manually create a new transaction.
+
+    Args:
+        transaction_data: Transaction data from user
+        current_user: Authenticated user
+        db: Database session
+
+    Returns:
+        Created transaction
+    """
+    import uuid
+    import hashlib
+
+    # Verify account belongs to user
+    account = db.query(Account).filter(
+        Account.id == transaction_data.account_id,
+        Account.user_id == current_user.id
+    ).first()
+
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Account {transaction_data.account_id} not found"
+        )
+
+    # Generate deterministic dedup hash for manual transactions
+    hash_input = f"manual:{transaction_data.account_id}:{transaction_data.date.isoformat()}:{transaction_data.description_raw}:{transaction_data.amount}"
+    hash_dedup_key = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
+
+    # Check for duplicate
+    existing = db.query(Transaction).filter(
+        Transaction.hash_dedup_key == hash_dedup_key
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A transaction with the same account, date, description, and amount already exists"
+        )
+
+    # Create transaction
+    transaction = Transaction(
+        id=str(uuid.uuid4()),
+        account_id=transaction_data.account_id,
+        import_id=None,
+        hash_dedup_key=hash_dedup_key,
+        date=transaction_data.date,
+        post_date=transaction_data.post_date,
+        description_raw=transaction_data.description_raw,
+        merchant_normalized=transaction_data.merchant_normalized,
+        amount=abs(transaction_data.amount),
+        currency=transaction_data.currency,
+        transaction_type=transaction_data.transaction_type,
+        category=transaction_data.category,
+        subcategory=transaction_data.subcategory,
+        tags=transaction_data.tags,
+        confidence=1.0,
+        needs_review=False,
+        classification_method='MANUAL',
+        user_note=transaction_data.user_note,
+    )
+    transaction.set_is_spend_based_on_type()
+
+    db.add(transaction)
+    db.commit()
+    db.refresh(transaction)
+
+    return transaction
+
+
 @router.get("/transactions", response_model=TransactionListResponse)
 def list_transactions(
     account_id: Optional[str] = Query(None),
