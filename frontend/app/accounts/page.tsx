@@ -159,6 +159,8 @@ export default function AccountsPage() {
       'CHECKING': 'Checking',
       'SAVINGS': 'Savings',
       'OTHER': 'Other',
+      'CASH': 'Cash',
+      'DIGITAL_WALLET': 'Digital Wallet',
       'BROKERAGE': 'Brokerage',
       'IRA_ROTH': 'Roth IRA',
       'IRA_TRADITIONAL': 'Traditional IRA',
@@ -178,6 +180,8 @@ export default function AccountsPage() {
       case 'IRA_TRADITIONAL': return '📋';
       case 'RETIREMENT_401K': return '🏛️';
       case 'STOCK_PLAN': return '📊';
+      case 'CASH': return '💵';
+      case 'DIGITAL_WALLET': return '📱';
       default: return '💰';
     }
   }
@@ -191,6 +195,8 @@ export default function AccountsPage() {
   const checkingAccounts = bankAccounts.filter(a => a.account_type === 'CHECKING');
   const savingsAccounts = bankAccounts.filter(a => a.account_type === 'SAVINGS');
   const otherAccounts = bankAccounts.filter(a => a.account_type === 'OTHER');
+  const cashAccounts = bankAccounts.filter(a => a.account_type === 'CASH');
+  const digitalWalletAccounts = bankAccounts.filter(a => a.account_type === 'DIGITAL_WALLET');
 
   // Render a single account card (compact)
   function renderAccountCard(account: Account) {
@@ -369,6 +375,8 @@ export default function AccountsPage() {
                 {renderSection('Credit Cards', '💳', creditCards, 'bg-purple-100 text-purple-700')}
                 {renderSection('Checking', '🏦', checkingAccounts, 'bg-blue-100 text-blue-700')}
                 {renderSection('Savings', '🐷', savingsAccounts, 'bg-green-100 text-green-700')}
+                {renderSection('Cash', '💵', cashAccounts, 'bg-emerald-100 text-emerald-700')}
+                {renderSection('Digital Wallets', '📱', digitalWalletAccounts, 'bg-cyan-100 text-cyan-700')}
                 {renderSection('Other', '💰', otherAccounts, 'bg-gray-100 text-gray-700')}
               </div>
             )}

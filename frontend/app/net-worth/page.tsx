@@ -268,6 +268,8 @@ export default function NetWorthPage() {
       case 'STOCK_PLAN': return '📊';
       case 'CHECKING': return '🏦';
       case 'SAVINGS': return '💰';
+      case 'CASH': return '💵';
+      case 'DIGITAL_WALLET': return '📱';
       default: return '📈';
     }
   }
@@ -281,6 +283,8 @@ export default function NetWorthPage() {
       case 'STOCK_PLAN': return 'Stock Plan';
       case 'CHECKING': return 'Checking';
       case 'SAVINGS': return 'Savings';
+      case 'CASH': return 'Cash';
+      case 'DIGITAL_WALLET': return 'Digital Wallet';
       default: return type;
     }
   }
@@ -608,7 +612,7 @@ export default function NetWorthPage() {
         {/* Net Worth Summary */}
         {!loading && netWorth && (() => {
           // Group accounts by category (deduplicate by account_id)
-          const cashTypes = ['CHECKING', 'SAVINGS'];
+          const cashTypes = ['CHECKING', 'SAVINGS', 'CASH', 'DIGITAL_WALLET'];
           const seenIds = new Set<string>();
           const uniqueAccounts = netWorth.accounts.filter(a => {
             if (seenIds.has(a.account_id)) return false;
@@ -930,7 +934,7 @@ export default function NetWorthPage() {
           const accountGroups = Object.values(snapshotsByAccount);
 
           // Separate by category
-          const cashTypes = ['CHECKING', 'SAVINGS'];
+          const cashTypes = ['CHECKING', 'SAVINGS', 'CASH', 'DIGITAL_WALLET'];
           const investmentGroups = accountGroups.filter(g => !cashTypes.includes(g.account_type));
           const cashGroups = accountGroups.filter(g => cashTypes.includes(g.account_type));
 

@@ -365,6 +365,8 @@ export default function ImportsPage() {
       'CHECKING': 'Checking',
       'SAVINGS': 'Savings',
       'OTHER': 'Other',
+      'CASH': 'Cash',
+      'DIGITAL_WALLET': 'Digital Wallet',
       // Brokerage account types
       'BROKERAGE': 'Brokerage',
       'IRA_ROTH': 'Roth IRA',
