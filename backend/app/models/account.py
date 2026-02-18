@@ -18,6 +18,8 @@ class AccountType(str, enum.Enum):
     SAVINGS = "SAVINGS"
     INVESTMENT = "INVESTMENT"
     OTHER = "OTHER"
+    CASH = "CASH"
+    DIGITAL_WALLET = "DIGITAL_WALLET"
     # Brokerage accounts
     BROKERAGE = "BROKERAGE"  # Taxable brokerage
     IRA_ROTH = "IRA_ROTH"  # Roth IRA
