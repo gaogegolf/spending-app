@@ -1,5 +1,5 @@
 // Account types
-export type AccountType = 'CREDIT_CARD' | 'CHECKING' | 'SAVINGS' | 'INVESTMENT' | 'OTHER' | 'BROKERAGE' | 'IRA_ROTH' | 'IRA_TRADITIONAL' | 'RETIREMENT_401K' | 'STOCK_PLAN';
+export type AccountType = 'CREDIT_CARD' | 'CHECKING' | 'SAVINGS' | 'INVESTMENT' | 'OTHER' | 'CASH' | 'DIGITAL_WALLET' | 'BROKERAGE' | 'IRA_ROTH' | 'IRA_TRADITIONAL' | 'RETIREMENT_401K' | 'STOCK_PLAN';
 
 export interface Account {
   id: string;
