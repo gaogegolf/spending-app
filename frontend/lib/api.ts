@@ -43,6 +43,12 @@ export async function getAccounts() {
   return response.json();
 }
 
+export async function getAccount(accountId: string) {
+  const response = await authFetch(`${API_BASE_URL}/accounts/${accountId}`);
+  if (!response.ok) throw new Error('Failed to fetch account');
+  return response.json();
+}
+
 export async function createAccount(data: {
   name: string;
   institution?: string;
@@ -144,6 +150,19 @@ export async function getImportStatus(importId: string) {
   const response = await authFetch(`${API_BASE_URL}/imports/${importId}`);
   if (!response.ok) throw new Error('Failed to get import status');
   return response.json();
+}
+
+export async function getImportsForAccount(accountId: string) {
+  const response = await authFetch(`${API_BASE_URL}/imports?account_id=${accountId}`);
+  if (!response.ok) throw new Error('Failed to fetch imports');
+  return response.json();
+}
+
+export async function deleteImport(importId: string) {
+  const response = await authFetch(`${API_BASE_URL}/imports/${importId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete import');
 }
 
 // Transactions API
@@ -700,6 +719,19 @@ export async function deleteBrokerageAccount(accountId: string) {
 }
 
 export async function deleteBrokerageSnapshot(snapshotId: string) {
+  const response = await authFetch(`${API_BASE_URL}/brokerage/snapshots/${snapshotId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error('Failed to delete snapshot');
+}
+
+export async function getSnapshotsForAccount(accountId: string) {
+  const response = await authFetch(`${API_BASE_URL}/brokerage/snapshots?account_id=${accountId}`);
+  if (!response.ok) throw new Error('Failed to fetch snapshots');
+  return response.json();
+}
+
+export async function deleteSnapshot(snapshotId: string) {
   const response = await authFetch(`${API_BASE_URL}/brokerage/snapshots/${snapshotId}`, {
     method: 'DELETE',
   });
