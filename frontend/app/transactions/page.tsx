@@ -1257,18 +1257,18 @@ export default function TransactionsPage() {
                     />
                   </th>
                   <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('date')}
                   >
                     <div className="flex items-center">
                       Date{getSortIcon('date')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Account
                   </th>
                   <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('description')}
                   >
                     <div className="flex items-center">
@@ -1276,7 +1276,7 @@ export default function TransactionsPage() {
                     </div>
                   </th>
                   <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('category')}
                   >
                     <div className="flex items-center">
@@ -1284,7 +1284,7 @@ export default function TransactionsPage() {
                     </div>
                   </th>
                   <th
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('type')}
                   >
                     <div className="flex items-center">
@@ -1292,14 +1292,14 @@ export default function TransactionsPage() {
                     </div>
                   </th>
                   <th
-                    className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                    className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
                     onClick={() => handleSort('amount')}
                   >
                     <div className="flex items-center justify-end">
                       Amount{getSortIcon('amount')}
                     </div>
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -1350,19 +1350,26 @@ export default function TransactionsPage() {
                         className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded cursor-pointer"
                       />
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDateDisplay(transaction.date)}
+                    <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">
+                      <span title={formatDateDisplay(transaction.date)}>
+                        {new Date(transaction.date + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div className="max-w-[120px] truncate" title={accounts.find(a => a.id === transaction.account_id)?.name || transaction.account_id}>
+                    <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-500">
+                      <div className="max-w-[90px] truncate" title={accounts.find(a => a.id === transaction.account_id)?.name || transaction.account_id}>
                         {accounts.find(a => a.id === transaction.account_id)?.name || '-'}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="max-w-xs">
+                    <td className="px-3 py-3 text-sm text-gray-900">
+                      <div className="max-w-[200px]">
                         <div className="truncate" title={transaction.description_raw}>
                           {transaction.merchant_normalized || transaction.description_raw}
                         </div>
+                        {transaction.merchant_normalized && transaction.description_raw && transaction.merchant_normalized !== transaction.description_raw && (
+                          <div className="mt-0.5 text-xs text-gray-400 truncate" title={transaction.description_raw}>
+                            {transaction.description_raw}
+                          </div>
+                        )}
                         {editingNoteId === transaction.id ? (
                           <input
                             type="text"
@@ -1392,7 +1399,7 @@ export default function TransactionsPage() {
                         ) : null}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-900">
                       {editingCategoryId === transaction.id ? (
                         <select
                           key={`category-${transaction.id}-${transaction.transaction_type}`}
@@ -1425,7 +1432,7 @@ export default function TransactionsPage() {
                         </button>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-3 py-3 whitespace-nowrap">
                       {editingTypeId === transaction.id ? (
                         <select
                           autoFocus
@@ -1447,14 +1454,14 @@ export default function TransactionsPage() {
                           className="focus:outline-none"
                           title="Click to change type"
                         >
-                          <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)} hover:ring-2 hover:ring-indigo-300 cursor-pointer transition-all`}>
-                            {transaction.transaction_type}
+                          <span className={`px-1.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)} hover:ring-2 hover:ring-indigo-300 cursor-pointer transition-all`} title={transaction.transaction_type}>
+                            {transaction.transaction_type.slice(0, 3)}
                           </span>
                         </button>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <span className={`font-semibold text-base ${
+                    <td className="px-3 py-3 whitespace-nowrap text-right">
+                      <span className={`font-semibold text-sm ${
                         transaction.is_spend
                           ? 'text-red-600'
                           : transaction.is_income
@@ -1465,8 +1472,8 @@ export default function TransactionsPage() {
                         ${Math.abs(parseFloat(transaction.amount)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <div className="flex items-center justify-center gap-3">
+                    <td className="px-3 py-3 whitespace-nowrap text-center">
+                      <div className="flex items-center justify-center gap-2">
                         <button
                           onClick={() => startEditingNote(transaction)}
                           className={`text-sm ${transaction.user_note ? 'text-indigo-600' : 'text-gray-400'} hover:text-indigo-800`}
@@ -1690,7 +1697,7 @@ export default function TransactionsPage() {
                   <SelectTrigger className="col-span-3">
                     <SelectValue placeholder="Optional" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-60">
                     <SelectItem value="none">None</SelectItem>
                     {getCategoriesForType(addForm.transaction_type).map((cat) => (
                       <SelectItem key={cat.id} value={cat.name}>
