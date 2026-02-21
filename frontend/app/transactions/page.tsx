@@ -1454,8 +1454,8 @@ export default function TransactionsPage() {
                           className="focus:outline-none"
                           title="Click to change type"
                         >
-                          <span className={`px-1.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)} hover:ring-2 hover:ring-indigo-300 cursor-pointer transition-all`} title={transaction.transaction_type}>
-                            {transaction.transaction_type.slice(0, 3)}
+                          <span className={`px-1.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${getTransactionTypeColor(transaction.transaction_type)} hover:ring-2 hover:ring-indigo-300 cursor-pointer transition-all`}>
+                            {transaction.transaction_type.charAt(0) + transaction.transaction_type.slice(1).toLowerCase()}
                           </span>
                         </button>
                       )}

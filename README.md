@@ -1,6 +1,5 @@
 # Personal Finance Manager
 
-[![English](https://img.shields.io/badge/lang-English-blue)](README.md)
 [![中文](https://img.shields.io/badge/lang-中文-red)](README.zh-CN.md)
 
 A full-stack personal finance app that imports bank/credit card statements, classifies transactions with AI, and tracks spending and net worth.
@@ -11,7 +10,7 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 
 ### Statement Import
 - **Multi-Format**: CSV and PDF support
-- **Supported Banks**: Chase, Fidelity, Amex, Capital One, Wells Fargo, Ally, Wealthfront, IBKR, Vanguard 401(k)
+- **Supported Banks**: Chase, Fidelity, Amex, Capital One, Wells Fargo, Ally, Wealthfront, IBKR, Vanguard 401(k), Equatex/EquatePlus, Schwab
 - **Unknown Format Handling**: AI-powered extraction for unsupported PDF formats using Claude Vision
 - **Smart Detection**: Auto-detects columns in CSV files
 - **AI Classification**: Claude AI categorizes transactions automatically
@@ -30,7 +29,13 @@ A full-stack personal finance app that imports bank/credit card statements, clas
 - **Bar Chart Toggle**: Visualize trends
 - **Transaction Grouping**: Group similar transactions
 
+### Account Management
+- **Account Types**: Credit Card, Checking, Savings, Brokerage, IRA, 401(k), Stock Plan, Cash, Digital Wallet
+- **Account Detail Page**: View import history, snapshots, and stats per account
+- **Delete Imports**: Remove imported statements and associated transactions
+
 ### Transaction Management
+- **Manual Entry**: Add transactions manually for cash/digital wallet accounts
 - **Smart Filters**: By account, type, category, date
 - **Notes**: Add notes to transactions
 - **Review Queue**: Flag items needing attention
@@ -164,6 +169,10 @@ You should change the password or create a new account after first login.
 | `GET /api/v1/stats/monthly` | Monthly summary |
 | `GET /api/v1/stats/yoy` | Year-over-year comparison |
 | `GET /api/v1/accounts` | List accounts |
+| `GET /api/v1/accounts/{id}` | Account detail with stats |
+| `POST /api/v1/transactions` | Create manual transaction |
+| `GET /api/v1/brokerage/snapshots` | List holdings snapshots |
+| `GET /api/v1/brokerage/net-worth` | Net worth summary |
 | `GET /api/v1/merchant-categories` | List merchant mappings |
 | `GET /api/v1/rules` | List categorization rules |
 | `GET /api/v1/reports/export` | Export transactions to CSV |
@@ -185,6 +194,8 @@ Full API docs: http://localhost:8000/docs
 | IBKR | PDF | Supported |
 | Vanguard 401(k) | PDF | Supported |
 | Wealthfront | PDF | Supported |
+| Equatex/EquatePlus | PDF | Supported |
+| Schwab | PDF | Supported |
 | Any Bank | CSV | Supported |
 | Unknown Banks | PDF | AI Fallback* |
 
@@ -196,6 +207,7 @@ Full API docs: http://localhost:8000/docs
 - **Minimal AI Data**: Only date/description/amount sent to AI (no personal info)
 - **Local Storage**: SQLite database by default
 - **Auto Cleanup**: Uploaded files deleted after processing
+- **Data Backup**: Full database backup and restore functionality
 
 ## License
 MIT
