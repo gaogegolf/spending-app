@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { getAccounts, createAccount, updateAccount, deleteAccount } from '@/lib/api';
 import { Account, AccountType } from '@/lib/types';
 
@@ -201,16 +202,17 @@ export default function AccountsPage() {
   // Render a single account card (compact)
   function renderAccountCard(account: Account) {
     return (
-      <div
+      <Link
+        href={`/accounts/${account.id}`}
         key={account.id}
-        className={`group relative bg-white rounded-xl border p-4 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 ${
+        className={`group relative bg-white rounded-xl border p-4 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 block ${
           !account.is_active ? 'opacity-60 border-gray-200' : 'border-gray-100 shadow-sm'
         }`}
       >
         {/* Edit/Delete buttons - show on hover */}
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
           <button
-            onClick={() => openEditModal(account)}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); openEditModal(account); }}
             className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
             title="Edit"
           >
@@ -219,7 +221,7 @@ export default function AccountsPage() {
             </svg>
           </button>
           <button
-            onClick={() => confirmDelete(account)}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); confirmDelete(account); }}
             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete"
           >
@@ -277,7 +279,7 @@ export default function AccountsPage() {
             )}
           </div>
         </div>
-      </div>
+      </Link>
     );
   }
 
