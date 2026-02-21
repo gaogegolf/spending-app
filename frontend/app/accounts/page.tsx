@@ -28,6 +28,7 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -187,9 +188,17 @@ export default function AccountsPage() {
     }
   }
 
+  // Filter accounts by search query
+  const filteredAccounts = searchQuery.trim()
+    ? accounts.filter(a => {
+        const text = `${a.name} ${a.institution || ''}`.toLowerCase();
+        return searchQuery.toLowerCase().split(/\s+/).every(word => text.includes(word));
+      })
+    : accounts;
+
   // Group accounts by category
-  const bankAccounts = accounts.filter(a => !isBrokerageType(a.account_type));
-  const investmentAccounts = accounts.filter(a => isBrokerageType(a.account_type));
+  const bankAccounts = filteredAccounts.filter(a => !isBrokerageType(a.account_type));
+  const investmentAccounts = filteredAccounts.filter(a => isBrokerageType(a.account_type));
 
   // Further group bank accounts by type
   const creditCards = bankAccounts.filter(a => a.account_type === 'CREDIT_CARD');
@@ -327,6 +336,22 @@ export default function AccountsPage() {
           </Button>
         </div>
 
+        {/* Search */}
+        {!loading && accounts.length > 0 && (
+          <div className="relative mb-6">
+            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <Input
+              type="text"
+              placeholder="Search accounts..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        )}
+
         {/* Error Message */}
         {error && (
           <Alert variant="destructive" className="mb-6">
@@ -360,8 +385,17 @@ export default function AccountsPage() {
           </Card>
         )}
 
+        {/* No search results */}
+        {!loading && accounts.length > 0 && filteredAccounts.length === 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+            <div className="text-4xl mb-3">🔍</div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">No accounts found</h3>
+            <p className="text-gray-500 text-sm">No accounts match &ldquo;{searchQuery}&rdquo;</p>
+          </div>
+        )}
+
         {/* Accounts by Category */}
-        {!loading && accounts.length > 0 && (
+        {!loading && filteredAccounts.length > 0 && (
           <div className="space-y-8">
             {/* Bank & Credit Section */}
             {bankAccounts.length > 0 && (
