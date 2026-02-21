@@ -136,6 +136,9 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
         setSnapshots(prev => prev.filter(s => s.id !== deleteDialog.id));
       }
       setDeleteDialog(null);
+      // Re-fetch account to update summary stats (transaction_count, import_count, etc.)
+      const updatedAccount = await getAccount(id);
+      setAccount(updatedAccount);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to delete ${deleteDialog.type}`);
     } finally {

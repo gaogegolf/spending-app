@@ -1041,11 +1041,16 @@ class ImportService:
         if not import_record:
             raise ValueError(f"Import record {import_id} not found")
 
+        # Delete associated transactions first (FK is SET NULL, not CASCADE)
+        self.db.query(Transaction).filter(
+            Transaction.import_id == import_id
+        ).delete()
+
         # Delete uploaded file
         file_path = self._get_file_path(import_record)
         if file_path.exists():
             file_path.unlink()
 
-        # Delete from database (cascade will delete associated transactions)
+        # Delete import record
         self.db.delete(import_record)
         self.db.commit()
