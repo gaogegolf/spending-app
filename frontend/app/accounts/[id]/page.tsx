@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from 'react';
 import Link from 'next/link';
-import { getAccount, getImportsForAccount, getSnapshotsForAccount, deleteImport, deleteSnapshot } from '@/lib/api';
+import { getAccount, getImportsForAccount, getHoldingsSnapshots, deleteImport, deleteBrokerageSnapshot } from '@/lib/api';
 import { Account, ImportRecord, AccountType } from '@/lib/types';
 import { formatDate } from '@/lib/dateUtils';
 
@@ -110,7 +110,7 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       // Load snapshots for brokerage accounts
       if (isBrokerageType(accountData.account_type)) {
         try {
-          const snapshotsData = await getSnapshotsForAccount(id);
+          const snapshotsData = await getHoldingsSnapshots({ accountId: id });
           setSnapshots(snapshotsData.snapshots || snapshotsData || []);
         } catch {
           setSnapshots([]);
@@ -130,10 +130,10 @@ export default function AccountDetailPage({ params }: { params: Promise<{ id: st
       setDeleting(true);
       if (deleteDialog.type === 'import') {
         await deleteImport(deleteDialog.id);
-        setImports(imports.filter(i => i.id !== deleteDialog.id));
+        setImports(prev => prev.filter(i => i.id !== deleteDialog.id));
       } else {
-        await deleteSnapshot(deleteDialog.id);
-        setSnapshots(snapshots.filter(s => s.id !== deleteDialog.id));
+        await deleteBrokerageSnapshot(deleteDialog.id);
+        setSnapshots(prev => prev.filter(s => s.id !== deleteDialog.id));
       }
       setDeleteDialog(null);
     } catch (err) {

@@ -725,18 +725,6 @@ export async function deleteBrokerageSnapshot(snapshotId: string) {
   if (!response.ok) throw new Error('Failed to delete snapshot');
 }
 
-export async function getSnapshotsForAccount(accountId: string) {
-  const response = await authFetch(`${API_BASE_URL}/brokerage/snapshots?account_id=${accountId}`);
-  if (!response.ok) throw new Error('Failed to fetch snapshots');
-  return response.json();
-}
-
-export async function deleteSnapshot(snapshotId: string) {
-  const response = await authFetch(`${API_BASE_URL}/brokerage/snapshots/${snapshotId}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) throw new Error('Failed to delete snapshot');
-}
 
 // Reports API
 export async function getYoYComparison(year1: number, year2: number, accountId?: string) {
