@@ -283,6 +283,21 @@ export default function ImportsPage() {
       setStep('processing');
       const parseResult = await parseBrokerageStatement(uploadResult.import_id);
       setBrokerageParseResult(parseResult);
+
+      // Auto-match to existing account by last4 + institution
+      if (autoDetectMode && parseResult.account_identifier) {
+        const last4 = parseResult.account_identifier.replace(/[^0-9A-Za-z]/g, '').slice(-4);
+        const provider = (parseResult.provider || '').toLowerCase();
+        const match = accounts.find(a =>
+          a.account_number_last4 === last4 &&
+          (a.institution || '').toLowerCase() === provider &&
+          BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)
+        );
+        if (match) {
+          setSelectedAccount(match.id);
+        }
+      }
+
       setStep('preview');
 
     } catch (err) {
