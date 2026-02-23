@@ -175,6 +175,7 @@ class IBKRBrokerageParser(BaseBrokerageParser):
 
             # Extract account info (use provided or extract from section)
             if account_id:
+                self._raw_account_number = account_id
                 account_identifier = f"****{account_id[-4:]}"
             else:
                 account_identifier = self._extract_account_identifier(section_text)
@@ -226,6 +227,7 @@ class IBKRBrokerageParser(BaseBrokerageParser):
                 reconciliation_diff=reconciliation_diff,
                 errors=errors,
                 warnings=warnings,
+                account_number_raw=self._raw_account_number,
                 raw_metadata={
                     "base_currency": self.base_currency,
                     "fx_rates": {k: str(v) for k, v in self.fx_rates.items()},
@@ -268,6 +270,7 @@ class IBKRBrokerageParser(BaseBrokerageParser):
         match = re.search(pattern, text)
         if match:
             account_id = match.group(1)
+            self._raw_account_number = account_id
             # Mask the account ID
             return f"****{account_id[-4:]}"
         return "****0000"

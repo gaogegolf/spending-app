@@ -68,6 +68,7 @@ class WealthfrontBrokerageParser(BaseBrokerageParser):
                 reconciliation_diff=reconciliation_diff,
                 errors=errors,
                 warnings=warnings,
+                account_number_raw=self._raw_account_number,
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
@@ -129,6 +130,7 @@ class WealthfrontBrokerageParser(BaseBrokerageParser):
         match = re.search(wf_pattern, self.full_text)
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             return f"****{account_num[-4:]}"
 
         # Pattern: 8-character alphanumeric code after ACCOUNT NUMBERS (newer statements)
@@ -136,6 +138,7 @@ class WealthfrontBrokerageParser(BaseBrokerageParser):
         match = re.search(account_section_pattern, self.full_text, re.IGNORECASE)
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             return f"****{account_num[-4:]}"
 
         # Older format: Account number appears after JTWROS line
@@ -144,6 +147,7 @@ class WealthfrontBrokerageParser(BaseBrokerageParser):
         match = re.search(jtwros_pattern, self.full_text)
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             return f"****{account_num[-4:]}"
 
         # Fallback: Look for 8-char alphanumeric that matches Wealthfront account pattern
@@ -155,6 +159,7 @@ class WealthfrontBrokerageParser(BaseBrokerageParser):
         for m in matches:
             # Must have both letters and numbers (not pure numeric like CUSIPs)
             if re.search(r'[A-Z]', m) and re.search(r'[0-9]', m):
+                self._raw_account_number = m
                 return f"****{m[-4:]}"
 
         return "Unknown"

@@ -39,6 +39,7 @@ class Account(Base):
     institution = Column(String(255))
     account_type = Column(Enum(AccountType), nullable=False)
     account_number_last4 = Column(String(4))
+    account_number_hash = Column(String(64))  # SHA256 hex digest
     currency = Column(String(3), default="USD")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

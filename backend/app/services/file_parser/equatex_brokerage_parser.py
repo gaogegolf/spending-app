@@ -74,6 +74,7 @@ class EquatexBrokerageParser(BaseBrokerageParser):
                 reconciliation_diff=reconciliation_diff,
                 errors=errors,
                 warnings=warnings,
+                account_number_raw=self._raw_account_number,
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
@@ -114,6 +115,7 @@ class EquatexBrokerageParser(BaseBrokerageParser):
 
         if match:
             user_id = match.group(1)
+            self._raw_account_number = user_id
             # Mask all but last 4 digits
             return f"****{user_id[-4:]}"
 

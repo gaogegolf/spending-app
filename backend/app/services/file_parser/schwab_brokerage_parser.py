@@ -64,6 +64,7 @@ class SchwabBrokerageParser(BaseBrokerageParser):
                 reconciliation_diff=reconciliation_diff,
                 errors=errors,
                 warnings=warnings,
+                account_number_raw=self._raw_account_number,
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
@@ -104,6 +105,7 @@ class SchwabBrokerageParser(BaseBrokerageParser):
 
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             # Mask the account number, showing only last 4 digits
             return f"****{account_num[-4:]}"
 

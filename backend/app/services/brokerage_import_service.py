@@ -34,6 +34,12 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def compute_account_hash(raw_account_number: str) -> str:
+    """Compute SHA256 hash of normalized account number."""
+    normalized = raw_account_number.replace("-", "").replace(" ", "").strip().upper()
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 class BrokerageImportService:
     """Service to orchestrate brokerage statement import."""
 
@@ -490,6 +496,10 @@ class BrokerageImportService:
 
         # Try to find existing account first, then create if not found
         account = self._find_existing_account(parse_result)
+        if account and not account.account_number_hash:
+            raw = parse_result.get("account_number_raw")
+            if raw:
+                account.account_number_hash = compute_account_hash(raw)
         if not account and create_account:
             account = self._create_account_from_result(parse_result, account_name)
         elif not account:
@@ -1037,9 +1047,25 @@ class BrokerageImportService:
     ) -> Optional[Account]:
         """Find existing account matching the parse result.
 
-        Matches by account_number_last4 and institution (provider), filtered by user_id.
-        This allows multiple imports to the same account to be linked together.
+        Tries hash-first matching (SHA256 of full account number), then falls back
+        to last4 + institution matching.
         """
+        raw = parse_result.get("account_number_raw")
+
+        # Try hash-first matching
+        if raw:
+            account_hash = compute_account_hash(raw)
+            query = self.db.query(Account).filter(
+                Account.account_number_hash == account_hash,
+                Account.is_active == True
+            )
+            if self.user_id:
+                query = query.filter(Account.user_id == self.user_id)
+            account = query.first()
+            if account:
+                return account
+
+        # Fallback: last4 + institution
         provider = parse_result.get("provider", "").title()
         account_identifier = parse_result.get("account_identifier", "")
         last4 = account_identifier[-4:] if len(account_identifier) >= 4 else None
@@ -1047,7 +1073,6 @@ class BrokerageImportService:
         if not last4:
             return None
 
-        # Find account with matching last4, institution, and user_id
         query = self.db.query(Account).filter(
             Account.account_number_last4 == last4,
             Account.institution == provider,
@@ -1055,9 +1080,7 @@ class BrokerageImportService:
         )
         if self.user_id:
             query = query.filter(Account.user_id == self.user_id)
-        account = query.first()
-
-        return account
+        return query.first()
 
     def _create_account_from_result(
         self,
@@ -1091,11 +1114,13 @@ class BrokerageImportService:
             type_name = type_names.get(account_type, "Investment")
             account_name = f"{provider} {type_name} {account_identifier}"
 
+        raw = parse_result.get("account_number_raw")
         account = Account(
             name=account_name,
             institution=provider,
             account_type=account_type,
             account_number_last4=account_identifier[-4:] if len(account_identifier) >= 4 else None,
+            account_number_hash=compute_account_hash(raw) if raw else None,
             user_id=self.user_id,
         )
 
@@ -1110,6 +1135,7 @@ class BrokerageImportService:
             "provider": result.provider,
             "account_type": result.account_type,
             "account_identifier": result.account_identifier,
+            "account_number_raw": result.account_number_raw,
             "statement_date": result.statement_date.isoformat() if result.statement_date else None,
             "statement_start_date": result.statement_start_date.isoformat() if result.statement_start_date else None,
             "total_value": str(result.total_value),

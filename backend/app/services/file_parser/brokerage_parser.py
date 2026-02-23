@@ -61,6 +61,9 @@ class BrokerageParseResult:
     errors: List[str]
     warnings: List[str]
 
+    # Full account number before masking (not stored, used for hashing)
+    account_number_raw: Optional[str] = None
+
     # Raw data for debugging
     raw_metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -201,6 +204,7 @@ class BaseBrokerageParser(ABC):
         self.full_text = ""
         self.provider: Optional[str] = None
         self.account_type: Optional[str] = None
+        self._raw_account_number: Optional[str] = None
 
     def _open_pdf(self) -> None:
         """Open PDF and extract full text for detection."""

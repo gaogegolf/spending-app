@@ -67,6 +67,7 @@ class VanguardBrokerageParser(BaseBrokerageParser):
                 reconciliation_diff=reconciliation_diff,
                 errors=errors,
                 warnings=warnings,
+                account_number_raw=self._raw_account_number,
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
@@ -109,6 +110,7 @@ class VanguardBrokerageParser(BaseBrokerageParser):
 
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             return f"****{account_num[-4:]}"
 
         # Try alternative pattern for IRA or other accounts
@@ -117,6 +119,7 @@ class VanguardBrokerageParser(BaseBrokerageParser):
 
         if match:
             account_num = match.group(1)
+            self._raw_account_number = account_num
             return f"****{account_num[-4:]}"
 
         return "Unknown"
