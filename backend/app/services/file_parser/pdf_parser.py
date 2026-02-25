@@ -365,6 +365,8 @@ class PDFParser(BaseParser):
         errors = []
         warnings = []
         transactions = []
+        account_last4 = None
+        account_number_raw = None
 
         try:
             # Extract all text from all pages
@@ -373,6 +375,17 @@ class PDFParser(BaseParser):
                 text = page.extract_text()
                 if text:
                     all_text += text + "\n"
+
+            # Extract account number from Amex format: "Account Ending 3-41008"
+            # Amex shows more than last4 — capture full visible portion for hashing
+            amex_acct_match = re.search(
+                r'Account\s+Ending\s*([\d][\d\-]+\d)',
+                all_text
+            )
+            if amex_acct_match:
+                raw_with_dashes = amex_acct_match.group(1)  # e.g., "3-41008"
+                account_number_raw = raw_with_dashes.replace('-', '')  # "341008"
+                account_last4 = account_number_raw[-4:]  # "1008"
 
             # Parse transactions from text
             transactions = self._extract_amex_transactions(all_text)
@@ -385,7 +398,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in American Express statement"],
                     warnings=warnings,
-                    metadata={'format': 'amex'},
+                    metadata={'format': 'amex', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -399,6 +412,8 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'amex',
+                    'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -412,7 +427,7 @@ class PDFParser(BaseParser):
                 transactions=[],
                 errors=errors,
                 warnings=warnings,
-                metadata={'format': 'amex'},
+                metadata={'format': 'amex', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                 detected_institution=institution,
                 detected_account_type=account_type
             )
