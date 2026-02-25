@@ -63,5 +63,8 @@ backend/db_viewer_cli.py
 backend/view_db.sh
 backend/DB_EXPLORATION.md
 
+# Verification reports (contain sensitive account data)
+docs/verification/
+
 # Worktrees
 .worktrees/
