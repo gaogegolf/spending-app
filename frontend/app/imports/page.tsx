@@ -284,8 +284,8 @@ export default function ImportsPage() {
       const parseResult = await parseBrokerageStatement(uploadResult.import_id);
       setBrokerageParseResult(parseResult);
 
-      // Auto-match to existing account by last4 + institution
-      if (autoDetectMode && parseResult.account_identifier) {
+      // Auto-match to existing account by last4 + institution (single-account only)
+      if (!parseResult.is_multi_account && autoDetectMode && parseResult.account_identifier) {
         const last4 = parseResult.account_identifier.replace(/[^0-9A-Za-z]/g, '').slice(-4);
         const provider = (parseResult.provider || '').toLowerCase();
         const match = accounts.find(a =>
@@ -315,18 +315,28 @@ export default function ImportsPage() {
       setImporting(true);
       setError(null);
 
-      // If user selected an existing account, use it; otherwise auto-create
-      const result = await commitBrokerageImport(brokerageImportId, selectedAccount ? {
-        accountId: selectedAccount,
-        createAccount: false
-      } : {
-        createAccount: true
-      });
-      setBrokerageResult({
-        account_name: result.account_name,
-        total_value: result.total_value,
-        position_count: result.position_count,
-      });
+      if (brokerageParseResult?.is_multi_account) {
+        // Multi-account: let backend auto-match each account
+        const result = await commitBrokerageImport(brokerageImportId, { createAccount: true });
+        setBrokerageResult({
+          account_name: `${result.accounts_committed} accounts`,
+          total_value: result.total_value,
+          position_count: result.results.reduce((sum: number, r: any) => sum + r.position_count, 0),
+        });
+      } else {
+        // Single-account: use selected account or auto-create
+        const result = await commitBrokerageImport(brokerageImportId, selectedAccount ? {
+          accountId: selectedAccount,
+          createAccount: false
+        } : {
+          createAccount: true
+        });
+        setBrokerageResult({
+          account_name: result.account_name,
+          total_value: result.total_value,
+          position_count: result.position_count,
+        });
+      }
       setStep('complete');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to commit import');
@@ -835,132 +845,254 @@ export default function ImportsPage() {
           <div className="bg-white/70 backdrop-blur-xl shadow-2xl rounded-2xl border border-white/50 p-8">
             <h2 className="text-xl font-bold text-gray-900 mb-6">Review Holdings</h2>
 
-            {/* Summary Card */}
-            <div className="bg-emerald-50 rounded-xl p-5 mb-6 border border-emerald-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-emerald-800 text-lg">
-                    {brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)} Statement
-                  </p>
-                  <p className="text-sm text-emerald-600 mt-1">
-                    {getAccountTypeLabel(brokerageParseResult.account_type)} • {brokerageParseResult.account_identifier}
-                  </p>
-                  {brokerageParseResult.statement_date && (
-                    <p className="text-sm text-emerald-600">
-                      As of {formatDate(brokerageParseResult.statement_date)}
-                    </p>
-                  )}
-                </div>
-                <div className="text-right">
-                  <p className="text-3xl font-bold text-emerald-800">
-                    {formatCurrency(brokerageParseResult.total_value)}
-                  </p>
-                  {brokerageParseResult.is_reconciled ? (
-                    <span className="text-xs text-emerald-600 font-medium">Reconciled</span>
-                  ) : (
-                    <span className="text-xs text-amber-600 font-medium">
-                      Diff: {formatCurrency(brokerageParseResult.reconciliation_diff)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Provider Mismatch Warning */}
-            {!autoDetectMode && selectedAccount && (() => {
-              const selectedAccountData = accounts.find(a => a.id === selectedAccount);
-              const detectedProvider = brokerageParseResult.provider.toLowerCase();
-              const accountInstitution = selectedAccountData?.institution?.toLowerCase() || '';
-              const isMismatch = accountInstitution && !accountInstitution.includes(detectedProvider) && !detectedProvider.includes(accountInstitution);
-
-              if (isMismatch) {
-                return (
-                  <div className="bg-red-50 rounded-lg p-4 mb-6 border-2 border-red-300">
-                    <div className="flex items-start gap-3">
-                      <span className="text-2xl">⚠️</span>
-                      <div>
-                        <p className="font-bold text-red-800">Provider Mismatch Detected!</p>
-                        <p className="text-sm text-red-700 mt-1">
-                          This statement is from <strong>{brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)}</strong>,
-                          but you selected <strong>{selectedAccountData?.name}</strong> ({selectedAccountData?.institution}).
+            {brokerageParseResult.is_multi_account && brokerageParseResult.accounts ? (
+              <>
+                {/* Multi-Account Summary Card */}
+                <div className="bg-emerald-50 rounded-xl p-5 mb-6 border border-emerald-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-emerald-800 text-lg">
+                          {brokerageParseResult.accounts[0]?.provider
+                            ? brokerageParseResult.accounts[0].provider.charAt(0).toUpperCase() + brokerageParseResult.accounts[0].provider.slice(1)
+                            : 'Unknown'} Statement
                         </p>
-                        <p className="text-sm text-red-700 mt-2">
-                          If you continue, the holdings will be imported into the wrong account.
-                          Consider using <strong>Auto-detect</strong> mode or selecting the correct account.
-                        </p>
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-200 text-emerald-800">
+                          {brokerageParseResult.account_count} accounts
+                        </span>
                       </div>
+                      {brokerageParseResult.accounts[0]?.statement_date && (
+                        <p className="text-sm text-emerald-600 mt-1">
+                          As of {formatDate(brokerageParseResult.accounts[0].statement_date)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-3xl font-bold text-emerald-800">
+                        {formatCurrency(brokerageParseResult.accounts.reduce((sum, a) => sum + a.total_value, 0))}
+                      </p>
+                      <span className="text-xs text-emerald-600 font-medium">
+                        {brokerageParseResult.accounts.reduce((sum, a) => sum + a.positions.length, 0)} positions total
+                      </span>
                     </div>
                   </div>
-                );
-              }
-              return null;
-            })()}
-
-            {/* Warnings */}
-            {brokerageParseResult.warnings && brokerageParseResult.warnings.length > 0 && (
-              <div className="bg-amber-50 rounded-lg p-4 mb-6 border border-amber-200">
-                <p className="font-semibold text-amber-800 mb-2">Warnings</p>
-                {brokerageParseResult.warnings.map((warning, i) => (
-                  <p key={i} className="text-sm text-amber-700">{warning}</p>
-                ))}
-              </div>
-            )}
-
-            {/* Positions Preview */}
-            <div className="border rounded-xl overflow-hidden mb-6">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Symbol</th>
-                    <th className="text-left px-4 py-3 font-semibold text-gray-700">Security</th>
-                    <th className="text-right px-4 py-3 font-semibold text-gray-700">Shares</th>
-                    <th className="text-right px-4 py-3 font-semibold text-gray-700">Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {brokerageParseResult.positions.slice(0, 10).map((pos, i) => (
-                    <tr key={i} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-mono font-semibold text-gray-900">{pos.symbol || '-'}</td>
-                      <td className="px-4 py-3 text-gray-600 truncate max-w-[200px]">{pos.security_name}</td>
-                      <td className="px-4 py-3 text-right text-gray-900">
-                        {pos.quantity?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                        {formatCurrency(pos.market_value)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {brokerageParseResult.positions.length > 10 && (
-                <div className="bg-gray-50 px-4 py-2 text-sm text-gray-500 text-center border-t">
-                  + {brokerageParseResult.positions.length - 10} more positions
                 </div>
-              )}
-            </div>
 
-            {/* Account Selection Override */}
-            {autoDetectMode && (
-              <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Import to account
-                </label>
-                <select
-                  value={selectedAccount}
-                  onChange={(e) => setSelectedAccount(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-base"
-                >
-                  <option value="">Auto-create: {brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)} {getAccountTypeLabel(brokerageParseResult.account_type)}</option>
-                  {accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
-                    <option key={account.id} value={account.id}>
-                      {account.name} ({account.institution || 'No institution'})
-                    </option>
+                {/* Per-Account Cards */}
+                <div className="space-y-3 mb-6">
+                  {brokerageParseResult.accounts.map((acct, idx) => (
+                    <div key={idx} className="bg-white rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-gray-900">
+                            {getAccountTypeLabel(acct.account_type)} &bull; {acct.account_identifier}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            {acct.positions.length} positions
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold text-gray-900">{formatCurrency(acct.total_value)}</p>
+                          {acct.is_reconciled ? (
+                            <span className="text-xs text-emerald-600">Reconciled</span>
+                          ) : (
+                            <span className="text-xs text-amber-600">
+                              Diff: {formatCurrency(acct.reconciliation_diff)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-2">
-                  Leave as auto-create or select an existing account to add positions to
-                </p>
-              </div>
+                </div>
+
+                {/* Warnings (aggregate from all accounts) */}
+                {brokerageParseResult.accounts.some(a => a.warnings?.length > 0) && (
+                  <div className="bg-amber-50 rounded-lg p-4 mb-6 border border-amber-200">
+                    <p className="font-semibold text-amber-800 mb-2">Warnings</p>
+                    {brokerageParseResult.accounts.flatMap((a, idx) =>
+                      (a.warnings || []).map((w, wi) => (
+                        <p key={`${idx}-${wi}`} className="text-sm text-amber-700">{w}</p>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Combined Positions Preview */}
+                {(() => {
+                  const allPositions = brokerageParseResult.accounts.flatMap(a => a.positions);
+                  return (
+                    <div className="border rounded-xl overflow-hidden mb-6">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left px-4 py-3 font-semibold text-gray-700">Symbol</th>
+                            <th className="text-left px-4 py-3 font-semibold text-gray-700">Security</th>
+                            <th className="text-right px-4 py-3 font-semibold text-gray-700">Shares</th>
+                            <th className="text-right px-4 py-3 font-semibold text-gray-700">Value</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {allPositions.slice(0, 10).map((pos, i) => (
+                            <tr key={i} className="hover:bg-gray-50">
+                              <td className="px-4 py-3 font-mono font-semibold text-gray-900">{pos.symbol || '-'}</td>
+                              <td className="px-4 py-3 text-gray-600 truncate max-w-[200px]">{pos.security_name}</td>
+                              <td className="px-4 py-3 text-right text-gray-900">
+                                {pos.quantity?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                              </td>
+                              <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                                {formatCurrency(pos.market_value)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {allPositions.length > 10 && (
+                        <div className="bg-gray-50 px-4 py-2 text-sm text-gray-500 text-center border-t">
+                          + {allPositions.length - 10} more positions
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Multi-account info (no account selector) */}
+                <div className="mb-6 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                  <p className="text-sm font-medium text-emerald-800">
+                    Each account will be automatically matched to an existing account or created as new.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Single-Account Summary Card */}
+                <div className="bg-emerald-50 rounded-xl p-5 mb-6 border border-emerald-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-emerald-800 text-lg">
+                        {brokerageParseResult.provider ? brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1) : 'Unknown'} Statement
+                      </p>
+                      <p className="text-sm text-emerald-600 mt-1">
+                        {getAccountTypeLabel(brokerageParseResult.account_type)} &bull; {brokerageParseResult.account_identifier}
+                      </p>
+                      {brokerageParseResult.statement_date && (
+                        <p className="text-sm text-emerald-600">
+                          As of {formatDate(brokerageParseResult.statement_date)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-3xl font-bold text-emerald-800">
+                        {formatCurrency(brokerageParseResult.total_value)}
+                      </p>
+                      {brokerageParseResult.is_reconciled ? (
+                        <span className="text-xs text-emerald-600 font-medium">Reconciled</span>
+                      ) : (
+                        <span className="text-xs text-amber-600 font-medium">
+                          Diff: {formatCurrency(brokerageParseResult.reconciliation_diff)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Provider Mismatch Warning */}
+                {!autoDetectMode && selectedAccount && brokerageParseResult.provider && (() => {
+                  const selectedAccountData = accounts.find(a => a.id === selectedAccount);
+                  const detectedProvider = brokerageParseResult.provider.toLowerCase();
+                  const accountInstitution = selectedAccountData?.institution?.toLowerCase() || '';
+                  const isMismatch = accountInstitution && !accountInstitution.includes(detectedProvider) && !detectedProvider.includes(accountInstitution);
+
+                  if (isMismatch) {
+                    return (
+                      <div className="bg-red-50 rounded-lg p-4 mb-6 border-2 border-red-300">
+                        <div className="flex items-start gap-3">
+                          <span className="text-2xl">⚠️</span>
+                          <div>
+                            <p className="font-bold text-red-800">Provider Mismatch Detected!</p>
+                            <p className="text-sm text-red-700 mt-1">
+                              This statement is from <strong>{brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1)}</strong>,
+                              but you selected <strong>{selectedAccountData?.name}</strong> ({selectedAccountData?.institution}).
+                            </p>
+                            <p className="text-sm text-red-700 mt-2">
+                              If you continue, the holdings will be imported into the wrong account.
+                              Consider using <strong>Auto-detect</strong> mode or selecting the correct account.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* Warnings */}
+                {brokerageParseResult.warnings && brokerageParseResult.warnings.length > 0 && (
+                  <div className="bg-amber-50 rounded-lg p-4 mb-6 border border-amber-200">
+                    <p className="font-semibold text-amber-800 mb-2">Warnings</p>
+                    {brokerageParseResult.warnings.map((warning, i) => (
+                      <p key={i} className="text-sm text-amber-700">{warning}</p>
+                    ))}
+                  </div>
+                )}
+
+                {/* Positions Preview */}
+                <div className="border rounded-xl overflow-hidden mb-6">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left px-4 py-3 font-semibold text-gray-700">Symbol</th>
+                        <th className="text-left px-4 py-3 font-semibold text-gray-700">Security</th>
+                        <th className="text-right px-4 py-3 font-semibold text-gray-700">Shares</th>
+                        <th className="text-right px-4 py-3 font-semibold text-gray-700">Value</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {brokerageParseResult.positions.slice(0, 10).map((pos, i) => (
+                        <tr key={i} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 font-mono font-semibold text-gray-900">{pos.symbol || '-'}</td>
+                          <td className="px-4 py-3 text-gray-600 truncate max-w-[200px]">{pos.security_name}</td>
+                          <td className="px-4 py-3 text-right text-gray-900">
+                            {pos.quantity?.toLocaleString(undefined, { maximumFractionDigits: 2 }) || '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold text-gray-900">
+                            {formatCurrency(pos.market_value)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {brokerageParseResult.positions.length > 10 && (
+                    <div className="bg-gray-50 px-4 py-2 text-sm text-gray-500 text-center border-t">
+                      + {brokerageParseResult.positions.length - 10} more positions
+                    </div>
+                  )}
+                </div>
+
+                {/* Account Selection Override */}
+                {autoDetectMode && (
+                  <div className="mb-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Import to account
+                    </label>
+                    <select
+                      value={selectedAccount}
+                      onChange={(e) => setSelectedAccount(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-base"
+                    >
+                      <option value="">Auto-create: {brokerageParseResult.provider ? brokerageParseResult.provider.charAt(0).toUpperCase() + brokerageParseResult.provider.slice(1) : 'Unknown'} {getAccountTypeLabel(brokerageParseResult.account_type)}</option>
+                      {accounts.filter(a => BROKERAGE_ACCOUNT_TYPES.includes(a.account_type as AccountType)).map((account) => (
+                        <option key={account.id} value={account.id}>
+                          {account.name} ({account.institution || 'No institution'})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Leave as auto-create or select an existing account to add positions to
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
             {/* Actions */}

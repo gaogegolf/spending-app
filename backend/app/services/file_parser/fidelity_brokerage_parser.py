@@ -60,6 +60,39 @@ class FidelityBrokerageParser(BaseBrokerageParser):
         accounts = self._parse_accounts_table()
         return len(accounts)
 
+    @staticmethod
+    def _extract_holder_from_account_name(account_name: str) -> Optional[str]:
+        """Extract holder name from Fidelity account table name.
+
+        Examples:
+            "FIDELITY ROTH IRA XINZHU CAI - ROTH INDIVIDUAL" → "XINZHU CAI"
+            "FIDELITY BROKERAGE GE GAO - INDIVIDUAL" → "GE GAO"
+        """
+        # Pattern: everything after "IRA|BROKERAGE|ACCOUNT" and before " - "
+        match = re.search(
+            r'(?:IRA|BROKERAGE|ACCOUNT)\s+([A-Z][A-Z\s]+?)\s+-\s+',
+            account_name, re.IGNORECASE
+        )
+        if match:
+            name = match.group(1).strip()
+            # Validate: 2-3 words, all caps
+            words = name.split()
+            if 2 <= len(words) <= 3 and all(w.isalpha() for w in words):
+                return name
+        return None
+
+    def _extract_holder_from_text(self) -> Optional[str]:
+        """Extract holder name from full statement text (single-account fallback)."""
+        # Look for pattern in accounts table section
+        pattern = r'(?:IRA|BROKERAGE|ACCOUNT)\s+([A-Z][A-Z\s]+?)\s+-\s+'
+        match = re.search(pattern, self.full_text, re.IGNORECASE)
+        if match:
+            name = match.group(1).strip()
+            words = name.split()
+            if 2 <= len(words) <= 3 and all(w.isalpha() for w in words):
+                return name
+        return None
+
     def _parse_accounts_table(self) -> List[dict]:
         """Parse the 'Accounts Included in This Report' table.
 
@@ -147,6 +180,7 @@ class FidelityBrokerageParser(BaseBrokerageParser):
                     pages,
                     account_info["account_number"],
                     account_info["ending_value"],
+                    account_table_name=account_info.get("name"),
                 )
                 results.append(result)
 
@@ -177,6 +211,7 @@ class FidelityBrokerageParser(BaseBrokerageParser):
         pages: List[int],
         account_number: str,
         expected_value: str,
+        account_table_name: Optional[str] = None,
     ) -> BrokerageParseResult:
         """Parse a single account section from Fidelity statement.
 
@@ -205,26 +240,36 @@ class FidelityBrokerageParser(BaseBrokerageParser):
                 # Fall back to full text
                 statement_date, statement_start_date = self._extract_statement_dates()
 
-            # Extract totals from section
-            total_value, total_cash, total_securities = self._extract_totals_from_text(section_text)
+            # Extract cash/securities breakdowns from section text
+            _, total_cash, total_securities = self._extract_totals_from_text(section_text)
 
-            # If we couldn't extract total value, use the expected value from the table
-            if total_value == Decimal("0") and expected_value:
+            # Use the per-account ending value from the accounts table as the
+            # authoritative total. The section text may contain the combined
+            # statement total (e.g. "Your Account Value") which is wrong for
+            # individual accounts in a multi-account statement.
+            total_value = Decimal("0")
+            if expected_value:
                 try:
                     total_value = Decimal(expected_value.replace(",", ""))
                 except InvalidOperation:
                     pass
 
+            # Fall back to section text extraction only if no expected value
+            if total_value == Decimal("0"):
+                total_value, _, _ = self._extract_totals_from_text(section_text)
+
             # Extract positions from pages
             positions = self._extract_positions_from_pages(pages)
 
-            # Calculate total from positions for reconciliation
+            # Reconciliation: add cash if not already captured as a position
             calculated_total = self._calculate_total(positions)
-            is_reconciled, reconciliation_diff = self._reconcile(total_value, calculated_total)
+            cash_in_positions = any(p.asset_class == "CASH" for p in positions)
+            reconcile_total = calculated_total if cash_in_positions else calculated_total + total_cash
+            is_reconciled, reconciliation_diff = self._reconcile(total_value, reconcile_total)
 
             if not is_reconciled:
                 warnings.append(
-                    f"Reconciliation warning: calculated total ${calculated_total} differs from "
+                    f"Reconciliation warning: calculated total ${reconcile_total} differs from "
                     f"reported total ${total_value} by ${reconciliation_diff}"
                 )
 
@@ -249,6 +294,7 @@ class FidelityBrokerageParser(BaseBrokerageParser):
                     "pages": len(pages),
                     "position_count": len(positions),
                     "account_number": account_number,
+                    "account_holder_name": self._extract_holder_from_account_name(account_table_name) if account_table_name else None,
                 },
             )
 
@@ -482,13 +528,15 @@ class FidelityBrokerageParser(BaseBrokerageParser):
             total_value, total_cash, total_securities = self._extract_totals()
             positions = self._extract_positions()
 
-            # Calculate total from positions for reconciliation
+            # Reconciliation: add cash if not already captured as a position
             calculated_total = self._calculate_total(positions)
-            is_reconciled, reconciliation_diff = self._reconcile(total_value, calculated_total)
+            cash_in_positions = any(p.asset_class == "CASH" for p in positions)
+            reconcile_total = calculated_total if cash_in_positions else calculated_total + total_cash
+            is_reconciled, reconciliation_diff = self._reconcile(total_value, reconcile_total)
 
             if not is_reconciled:
                 warnings.append(
-                    f"Reconciliation warning: calculated total ${calculated_total} differs from "
+                    f"Reconciliation warning: calculated total ${reconcile_total} differs from "
                     f"reported total ${total_value} by ${reconciliation_diff}"
                 )
 
@@ -512,6 +560,7 @@ class FidelityBrokerageParser(BaseBrokerageParser):
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
+                    "account_holder_name": self._extract_holder_from_text(),
                 },
             )
 
@@ -552,13 +601,15 @@ class FidelityBrokerageParser(BaseBrokerageParser):
             total_value, total_cash, total_securities = self._extract_totals()
             positions = self._extract_positions()
 
-            # Calculate total from positions for reconciliation
+            # Reconciliation: add cash if not already captured as a position
             calculated_total = self._calculate_total(positions)
-            is_reconciled, reconciliation_diff = self._reconcile(total_value, calculated_total)
+            cash_in_positions = any(p.asset_class == "CASH" for p in positions)
+            reconcile_total = calculated_total if cash_in_positions else calculated_total + total_cash
+            is_reconciled, reconciliation_diff = self._reconcile(total_value, reconcile_total)
 
             if not is_reconciled:
                 warnings.append(
-                    f"Reconciliation warning: calculated total ${calculated_total} differs from "
+                    f"Reconciliation warning: calculated total ${reconcile_total} differs from "
                     f"reported total ${total_value} by ${reconciliation_diff}"
                 )
 
@@ -582,6 +633,7 @@ class FidelityBrokerageParser(BaseBrokerageParser):
                 raw_metadata={
                     "pages": len(self.pdf.pages) if self.pdf else 0,
                     "position_count": len(positions),
+                    "account_holder_name": self._extract_holder_from_text(),
                 },
             )
 

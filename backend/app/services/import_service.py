@@ -611,13 +611,19 @@ class ImportService:
             detected_institution = 'Unknown'
             logger.warning(f"No institution detected for import {import_record.id}, using 'Unknown'")
 
+        # Extract identity fields from parse metadata
+        account_holder_name = parse_metadata.get('account_holder_name')
+        card_product_name = parse_metadata.get('card_product_name')
+
         # Generate account name
         if custom_name:
             account_name = custom_name
         else:
-            # Format: "Chase Credit Card" or "Ally Bank Checking"
             type_display = detected_account_type.replace('_', ' ').title()
-            account_name = f"{detected_institution} {type_display}"
+            account_name = self._format_account_display_name(
+                account_holder_name, card_product_name,
+                detected_institution, type_display
+            )
 
         # Check for existing account with same institution, type, and last4
         existing = self._find_existing_account(
@@ -652,6 +658,39 @@ class ImportService:
 
         logger.info(f"Created new account {new_account.id}: {account_name}")
         return new_account.id
+
+    @staticmethod
+    def _format_account_display_name(
+        holder_name: Optional[str],
+        product_name: Optional[str],
+        institution: str,
+        type_display: str
+    ) -> str:
+        """Format a human-friendly account display name.
+
+        Priority:
+        1. "{FirstName} - {Product}"             e.g. "Xinzhu - Hilton Aspire"
+        2. "{FirstName} - {Institution} {Type}"   e.g. "Ge - Wells Fargo Credit Card"
+        3. "{Institution} {Type}"                 e.g. "American Express Credit Card"
+
+        For bank subtypes (Spending/Savings/Checking), prepend institution:
+            "Ge - Ally Bank Spending", "Ge - Chase Checking"
+        """
+        first_name = None
+        if holder_name:
+            first_name = holder_name.split()[0].title()
+
+        # Bank subtypes that need institution prepended
+        bank_subtypes = {'Spending', 'Savings', 'Checking'}
+
+        if first_name and product_name:
+            if product_name in bank_subtypes:
+                return f"{first_name} - {institution} {product_name}"
+            return f"{first_name} - {product_name}"
+        elif first_name:
+            return f"{first_name} - {institution} {type_display}"
+        else:
+            return f"{institution} {type_display}"
 
     def _find_existing_account(
         self,
@@ -765,7 +804,7 @@ class ImportService:
 
         # Priority 2: Determine transaction type from keywords and amount
         # Check for payments/transfers first
-        if any(keyword in description for keyword in ['PAYMENT', 'AUTOPAY', 'THANK YOU']):
+        if any(keyword in description for keyword in ['AUTOPAY', 'THANK YOU']):
             txn_type = 'TRANSFER'
             is_spend = False
             is_income = False

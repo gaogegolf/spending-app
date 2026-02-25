@@ -1107,7 +1107,15 @@ class BrokerageImportService:
                 AccountType.STOCK_PLAN: "Stock Plan",
             }
             type_name = type_names.get(account_type, "Investment")
-            account_name = f"{provider} {type_name} {account_identifier}"
+
+            # Try to use holder name for better display: "{FirstName} - {Provider} {TypeName}"
+            raw_meta = parse_result.get("raw_metadata", {})
+            holder_name = raw_meta.get("account_holder_name")
+            if holder_name:
+                first_name = holder_name.split()[0].title()
+                account_name = f"{first_name} - {provider} {type_name}"
+            else:
+                account_name = f"{provider} {type_name} {account_identifier}"
 
         raw = parse_result.get("account_number_raw")
         account = Account(
@@ -1164,4 +1172,5 @@ class BrokerageImportService:
             "base_currency": result.base_currency,
             "fx_rates": {k: str(v) for k, v in result.fx_rates.items()} if result.fx_rates else {},
             "cash_by_currency": {k: str(v) for k, v in result.cash_by_currency.items()} if result.cash_by_currency else {},
+            "raw_metadata": result.raw_metadata or {},
         }

@@ -51,6 +51,226 @@ class PDFParser(BaseParser):
         }
         return format_mapping.get(format_name, (None, None))
 
+    # --- Account identity extraction (holder name + card product) ---
+
+    _EXCLUDE_HEADER_WORDS = {
+        'ACCOUNT', 'TOTAL', 'BALANCE', 'PAYMENT', 'PAYMENTS', 'CREDITS',
+        'PURCHASES', 'SUMMARY', 'ACTIVITY', 'DETAIL', 'DETAILS', 'CHARGES',
+        'STATEMENT', 'BILLING', 'MINIMUM', 'INTEREST', 'FEES', 'PAGE',
+        'AMOUNT', 'DATE', 'DESCRIPTION', 'CATEGORY', 'REFERENCE', 'NUMBER',
+        'PREVIOUS', 'NEW', 'TRANSACTION', 'TRANSACTIONS', 'CREDIT', 'DEBIT',
+        'OPENING', 'CLOSING', 'REWARDS', 'POINTS', 'CASH', 'BACK',
+        'IMPORTANT', 'INFORMATION', 'NOTICE', 'CARDMEMBER', 'MEMBER',
+        'CONTINUED', 'NEXT', 'SUBTOTAL',
+    }
+
+    def _extract_account_identity(self, first_page_text: str, format_name: str) -> Dict[str, Optional[str]]:
+        """Extract account holder name and card product name from first page text.
+
+        Args:
+            first_page_text: Text from the first page of the PDF
+            format_name: Detected statement format name
+
+        Returns:
+            Dict with 'account_holder_name' and 'card_product_name' (either may be None)
+        """
+        extractors = {
+            'amex': self._extract_amex_identity,
+            'capitalone': self._extract_capitalone_identity,
+            'fidelity': self._extract_fidelity_cc_identity,
+            'chase': self._extract_chase_cc_identity,
+            'wellsfargo': self._extract_wellsfargo_identity,
+            'boa': self._extract_boa_identity,
+            'allybank': self._extract_allybank_identity,
+            'chasebank': self._extract_chasebank_identity,
+        }
+        extractor = extractors.get(format_name)
+        if extractor:
+            try:
+                holder, product = extractor(first_page_text)
+                return {'account_holder_name': holder, 'card_product_name': product}
+            except Exception:
+                pass
+        return {'account_holder_name': None, 'card_product_name': None}
+
+    def _extract_amex_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Amex statement. Line 1 = product, line 2 = holder name."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        product = None
+        holder = None
+        if len(lines) >= 2:
+            # Line 1: product name, strip trailing "p. X/Y" page numbers
+            product_line = re.sub(r'\s+p\.\s*\d+/\d+$', '', lines[0])
+            product = self._simplify_card_product_name(product_line)
+            # Line 2: "XINZHU CAI Customer Care: 1-833-698-2566"
+            # Extract leading ALL CAPS words (the name portion)
+            name_match = re.match(r'^([A-Z][A-Z]+(?:\s+[A-Z][A-Z]+){1,2})\b', lines[1])
+            if name_match:
+                holder = name_match.group(1)
+        return (holder, product)
+
+    def _extract_capitalone_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Capital One statement. Card product line before '|', name near bottom."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        product = None
+        # Find the card product line (skip "Page X of Y" headers)
+        for line in lines[:5]:
+            if re.match(r'^Page\s+\d+\s+of\s+\d+$', line, re.IGNORECASE):
+                continue
+            if '|' in line or 'Card' in line:
+                if '|' in line:
+                    product = self._simplify_card_product_name(line.split('|')[0].strip())
+                else:
+                    product = self._simplify_card_product_name(line)
+                break
+        holder = self._find_holder_name_near_bottom(lines)
+        return (holder, product)
+
+    def _extract_fidelity_cc_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Fidelity credit card statement."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        product = None
+        holder = None
+        # Scan first ~10 lines for a line containing "Card" with "Fidelity" or "Visa"/"Mastercard"
+        for i, line in enumerate(lines[:10]):
+            if 'Card' in line and ('Fidelity' in line or 'Visa' in line or 'Mastercard' in line):
+                product = self._simplify_card_product_name(line)
+                # Holder name is usually a nearby ALL CAPS line
+                for j in range(max(0, i-2), min(len(lines), i+4)):
+                    if j != i and self._is_holder_name(lines[j], self._EXCLUDE_HEADER_WORDS):
+                        holder = lines[j]
+                        break
+                break
+        if not holder:
+            holder = self._find_holder_name_near_bottom(lines)
+        return (holder, product)
+
+    def _extract_chase_cc_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Chase credit card statement. Product unreliable (garbled fonts)."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        holder = self._find_holder_name_near_bottom(lines)
+        return (holder, None)
+
+    def _extract_wellsfargo_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Wells Fargo statement. Product not available in text."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        holder = self._find_holder_name_near_bottom(lines)
+        return (holder, None)
+
+    def _extract_boa_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Bank of America statement. Product too generic."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        holder = self._find_holder_name_near_top(lines) or self._find_holder_name_near_bottom(lines)
+        return (holder, None)
+
+    def _extract_allybank_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Ally Bank statement. Product = account subtype."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        holder = self._find_holder_name_near_top(lines)
+        product = None
+        for line in lines[:20]:
+            low = line.lower()
+            if 'spending account' in low:
+                product = 'Spending'
+                break
+            elif 'savings account' in low:
+                product = 'Savings'
+                break
+        return (holder, product)
+
+    def _extract_chasebank_identity(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract identity from Chase Bank checking/savings statement."""
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        holder = self._find_holder_name_near_top(lines)
+        product = None
+        for line in lines[:40]:
+            low = line.lower()
+            if 'checking' in low:
+                product = 'Checking'
+                break
+            elif 'savings' in low and 'checking' not in low:
+                product = 'Savings'
+                break
+        return (holder, product)
+
+    def _find_holder_name_near_bottom(self, lines: List[str]) -> Optional[str]:
+        """Search last ~30 lines for a 2-3 word ALL CAPS personal name."""
+        for line in reversed(lines[-30:]):
+            if self._is_holder_name(line, self._EXCLUDE_HEADER_WORDS):
+                return line
+        return None
+
+    def _find_holder_name_near_top(self, lines: List[str]) -> Optional[str]:
+        """Search first ~15 lines for a 2-3 word ALL CAPS personal name."""
+        exclude_words = self._EXCLUDE_HEADER_WORDS | {
+            'ALLY', 'BANK', 'CHASE', 'CHECKING', 'SAVINGS', 'SPENDING',
+        }
+        for line in lines[:15]:
+            if self._is_holder_name(line, exclude_words):
+                return line
+            # Also try extracting leading ALL CAPS words from mixed lines
+            name = self._extract_leading_caps_name(line, exclude_words)
+            if name:
+                return name
+        return None
+
+    @staticmethod
+    def _is_holder_name(line: str, exclude_words: set) -> bool:
+        """Check if a line looks like a personal name (2-3 ALL CAPS words, no digits)."""
+        if not line or line != line.upper():
+            return False
+        # Must be 2-3 words, all letters/hyphens/dots
+        if not re.match(r'^[A-Z][A-Z\s\-\.]+$', line):
+            return False
+        words = line.split()
+        if len(words) < 2 or len(words) > 3:
+            return False
+        # None of the words should be common section headers
+        if any(w in exclude_words for w in words):
+            return False
+        # Each word should be at least 2 chars
+        if any(len(w) < 2 for w in words):
+            return False
+        return True
+
+    @staticmethod
+    def _extract_leading_caps_name(line: str, exclude_words: set) -> Optional[str]:
+        """Extract 2-3 leading ALL CAPS words from a line that may have other content.
+
+        Example: "GE GAO International Calls: 1-713..." → "GE GAO"
+        """
+        match = re.match(r'^([A-Z][A-Z]+(?:\s+[A-Z][A-Z]+){1,2})\b', line)
+        if match:
+            candidate = match.group(1)
+            words = candidate.split()
+            if 2 <= len(words) <= 3 and not any(w in exclude_words for w in words) and all(len(w) >= 2 for w in words):
+                return candidate
+        return None
+
+    @staticmethod
+    def _simplify_card_product_name(name: str) -> str:
+        """Clean up a card product name for display.
+
+        Examples:
+            "Hilton Honors Aspire Card" → "Hilton Aspire"
+            "Blue Cash Preferred® from American Express" → "Blue Cash Preferred"
+            "Venture X Card | Visa Infinite..." → "Venture X"
+            "Fidelity® Rewards Visa Signature® Card" → "Fidelity Rewards"
+        """
+        # Strip registered/service mark symbols
+        name = name.replace('®', '').replace('℠', '').replace('™', '')
+        # Remove "from American Express"
+        name = re.sub(r'\s+from\s+American\s+Express', '', name, flags=re.IGNORECASE)
+        # Remove "Card" suffix
+        name = re.sub(r'\s+Card\s*$', '', name)
+        # Remove "Visa Signature", "Visa Infinite", "Visa", "Mastercard" suffixes
+        name = re.sub(r'\s+(?:Visa\s+(?:Signature|Infinite|Platinum)|Visa|Mastercard)\s*$', '', name, flags=re.IGNORECASE)
+        # "Hilton Honors Aspire" → "Hilton Aspire" (remove "Honors" from Hilton names)
+        name = re.sub(r'^(Hilton)\s+Honors\s+', r'\1 ', name)
+        # Clean up whitespace
+        name = ' '.join(name.split())
+        return name
+
     def parse(self) -> ParseResult:
         """Parse PDF file and return transactions."""
         errors = []
@@ -94,6 +314,10 @@ class PDFParser(BaseParser):
 
             # Get institution info based on detected format
             institution, account_type = self._get_institution_info(self.statement_format or 'unknown')
+
+            # Extract account holder and card product from first page
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, self.statement_format or 'fidelity')
 
             # Try to detect institution from text if not already known
             if not institution:
@@ -188,7 +412,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in PDF tables"],
                     warnings=[],
-                    metadata={},
+                    metadata={**identity},
                     detected_institution=fidelity_institution,
                     detected_account_type=fidelity_account_type
                 )
@@ -205,6 +429,7 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'fidelity_two_table',
+                    **identity,
                 },
                 detected_institution=fidelity_institution,
                 detected_account_type=fidelity_account_type
@@ -392,13 +617,17 @@ class PDFParser(BaseParser):
 
             institution, account_type = self._get_institution_info('amex')
 
+            # Extract account holder and card product
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'amex')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in American Express statement"],
                     warnings=warnings,
-                    metadata={'format': 'amex', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'amex', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -414,6 +643,7 @@ class PDFParser(BaseParser):
                     'format': 'amex',
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -722,13 +952,17 @@ class PDFParser(BaseParser):
             transactions = self._extract_chase_transactions(all_text)
             institution, account_type = self._get_institution_info('chase')
 
+            # Extract account holder (product unreliable for Chase CC)
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'chase')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Chase statement"],
                     warnings=warnings,
-                    metadata={'format': 'chase', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'chase', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -744,6 +978,7 @@ class PDFParser(BaseParser):
                     'format': 'chase',
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1028,13 +1263,17 @@ class PDFParser(BaseParser):
             transactions = self._extract_wellsfargo_transactions(all_text)
             institution, account_type = self._get_institution_info('wellsfargo')
 
+            # Extract account holder
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'wellsfargo')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Wells Fargo statement"],
                     warnings=warnings,
-                    metadata={'format': 'wellsfargo', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'wellsfargo', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1050,6 +1289,7 @@ class PDFParser(BaseParser):
                     'format': 'wellsfargo',
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1370,13 +1610,17 @@ class PDFParser(BaseParser):
             transactions = self._extract_capitalone_transactions(all_text)
             institution, account_type = self._get_institution_info('capitalone')
 
+            # Extract account holder and card product
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'capitalone')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Capital One statement"],
                     warnings=warnings,
-                    metadata={'format': 'capitalone', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'capitalone', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1392,6 +1636,7 @@ class PDFParser(BaseParser):
                     'format': 'capitalone',
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1691,13 +1936,17 @@ class PDFParser(BaseParser):
             transactions = self._extract_boa_transactions(all_text)
             institution, account_type = self._get_institution_info('boa')
 
+            # Extract account holder
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'boa')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Bank of America statement"],
                     warnings=warnings,
-                    metadata={'format': 'boa', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'boa', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1713,6 +1962,7 @@ class PDFParser(BaseParser):
                     'format': 'boa',
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1927,13 +2177,17 @@ class PDFParser(BaseParser):
             transactions = self._extract_allybank_transactions(all_text)
             institution, account_type = self._get_institution_info('allybank')
 
+            # Extract account holder and account subtype
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'allybank')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Ally Bank statement"],
                     warnings=warnings,
-                    metadata={'format': 'allybank', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
+                    metadata={'format': 'allybank', 'account_last4': account_last4, 'account_number_raw': account_number_raw, **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1955,6 +2209,7 @@ class PDFParser(BaseParser):
                     'statement_date': statement_date,
                     'account_last4': account_last4,
                     'account_number_raw': account_number_raw,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -2395,13 +2650,17 @@ class PDFParser(BaseParser):
             # Extract balances for net worth tracking
             balances = self._extract_chasebank_balances(all_text)
 
+            # Extract account holder and account subtype
+            first_page_text = self.pdf.pages[0].extract_text() or ''
+            identity = self._extract_account_identity(first_page_text, 'chasebank')
+
             if not transactions:
                 return ParseResult(
                     success=False,
                     transactions=[],
                     errors=["No transactions found in Chase Bank statement"],
                     warnings=[],
-                    metadata={'format': 'chasebank'},
+                    metadata={'format': 'chasebank', **identity},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -2417,6 +2676,7 @@ class PDFParser(BaseParser):
                     'statement_year': statement_year,
                     'statement_date': statement_date,
                     'balances': balances,
+                    **identity,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
