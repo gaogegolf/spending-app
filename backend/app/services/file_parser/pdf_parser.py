@@ -715,6 +715,9 @@ class PDFParser(BaseParser):
             if last4_match:
                 account_last4 = last4_match.group(1)
 
+            # For Chase, only last 4 digits are visible — raw same as last4
+            account_number_raw = account_last4
+
             # Parse transactions from text
             transactions = self._extract_chase_transactions(all_text)
             institution, account_type = self._get_institution_info('chase')
@@ -725,7 +728,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Chase statement"],
                     warnings=warnings,
-                    metadata={'format': 'chase', 'account_last4': account_last4},
+                    metadata={'format': 'chase', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -740,6 +743,7 @@ class PDFParser(BaseParser):
                     'source': 'pdf',
                     'format': 'chase',
                     'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1646,12 +1650,16 @@ class PDFParser(BaseParser):
                 if text:
                     all_text += text + "\n"
 
-            # Extract account last 4 digits from "Account# XXXX XXXX XXXX 4537" or "Account Number: XXXX XXXX XXXX 4537"
-            account_last4 = None
             # BOA shows full account number: "Account# 4400 6682 7249 4537"
-            last4_match = re.search(r'Account[#\s]+(?:Number[:\s]+)?(?:\d{4}\s+){3}(\d{4})', all_text)
-            if last4_match:
-                account_last4 = last4_match.group(1)
+            account_last4 = None
+            account_number_raw = None
+            full_match = re.search(
+                r'Account[#\s]+(?:Number[:\s]+)?(\d{4}\s+\d{4}\s+\d{4}\s+\d{4})',
+                all_text
+            )
+            if full_match:
+                account_number_raw = full_match.group(1).replace(' ', '')  # "4400668272494537"
+                account_last4 = account_number_raw[-4:]  # "4537"
 
             # Parse transactions from text
             transactions = self._extract_boa_transactions(all_text)
@@ -1663,7 +1671,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Bank of America statement"],
                     warnings=warnings,
-                    metadata={'format': 'boa', 'account_last4': account_last4},
+                    metadata={'format': 'boa', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1678,6 +1686,7 @@ class PDFParser(BaseParser):
                     'source': 'pdf',
                     'format': 'boa',
                     'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
