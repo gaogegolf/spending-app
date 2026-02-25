@@ -96,6 +96,17 @@ class CSVParser(BaseParser):
             headers = self.df.columns.tolist()
             self.detected_bank, self.detected_account_type = self._detect_csv_bank(headers)
 
+            # Extract account number from CSV if available
+            account_last4 = None
+            account_number_raw = None
+            if self.detected_bank == 'Capital One' and 'Card No.' in self.df.columns:
+                # Capital One CSV has "Card No." column with last 4 digits
+                card_values = self.df['Card No.'].dropna().unique()
+                if len(card_values) > 0:
+                    card_no = str(int(card_values[0])) if isinstance(card_values[0], float) else str(card_values[0])
+                    account_last4 = card_no[-4:]
+                    account_number_raw = account_last4
+
             # Detect or apply column mapping
             if not self.column_mapping:
                 detected = self.detect_format()
@@ -111,7 +122,10 @@ class CSVParser(BaseParser):
                     transactions=[],
                     errors=validation_errors,
                     warnings=warnings,
-                    metadata={},
+                    metadata={
+                        'account_last4': account_last4,
+                        'account_number_raw': account_number_raw,
+                    },
                     detected_institution=self.detected_bank,
                     detected_account_type=self.detected_account_type
                 )
@@ -131,6 +145,8 @@ class CSVParser(BaseParser):
                     'total_rows': len(self.df),
                     'column_mapping': self.column_mapping,
                     'amount_convention': self.amount_convention,
+                    'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=self.detected_bank,
                 detected_account_type=self.detected_account_type
