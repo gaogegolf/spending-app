@@ -23,6 +23,7 @@ from app.services.classifier.rule_engine import RuleEngine
 from app.services.deduplication import DeduplicationService
 from app.services.bank_balance_service import BankBalanceService
 from app.services.fx_rate_service import FxRateService
+from app.services.account_hash import compute_account_hash
 from app.config import settings
 
 
@@ -603,6 +604,7 @@ class ImportService:
         # Get last 4 digits from parse metadata (nested in parse_metadata)
         parse_metadata = metadata.get('parse_metadata', {})
         account_last4 = parse_metadata.get('account_last4')
+        account_number_raw = parse_metadata.get('account_number_raw')
 
         if not detected_institution:
             detected_institution = 'Unknown'
@@ -617,8 +619,14 @@ class ImportService:
             account_name = f"{detected_institution} {type_display}"
 
         # Check for existing account with same institution, type, and last4
-        existing = self._find_existing_account(detected_institution, detected_account_type, account_last4)
+        existing = self._find_existing_account(
+            detected_institution, detected_account_type, account_last4, account_number_raw
+        )
         if existing:
+            # Backfill hash if missing (same pattern as brokerage imports)
+            if account_number_raw and not existing.account_number_hash:
+                existing.account_number_hash = compute_account_hash(account_number_raw)
+                self.db.commit()
             logger.info(f"Found existing account {existing.id} for {detected_institution} {detected_account_type} (last4: {account_last4})")
             return existing.id
 
@@ -633,6 +641,7 @@ class ImportService:
             account_type=detected_account_type,
             institution=detected_institution,
             account_number_last4=account_last4,
+            account_number_hash=compute_account_hash(account_number_raw) if account_number_raw else None,
             is_active=True
         )
 
@@ -647,23 +656,30 @@ class ImportService:
         self,
         institution: str,
         account_type: str,
-        last4: Optional[str] = None
+        last4: Optional[str] = None,
+        account_number_raw: Optional[str] = None
     ) -> Optional[Account]:
         """Find an existing account matching institution, type, and optionally last4.
 
-        Args:
-            institution: Institution name (e.g., 'Chase')
-            account_type: Account type (e.g., 'CREDIT_CARD')
-            last4: Last 4 digits of account/card number (optional)
-
-        Returns:
-            Matching Account or None
+        Uses hash-first matching (SHA256 of account number), then falls back
+        to last4 + institution matching.
         """
         user_id = self.user_id
         if not user_id:
             return None
 
-        # Build query with required filters
+        # Try hash-first matching
+        if account_number_raw:
+            account_hash = compute_account_hash(account_number_raw)
+            account = self.db.query(Account).filter(
+                Account.user_id == user_id,
+                Account.account_number_hash == account_hash,
+                Account.is_active == True
+            ).first()
+            if account:
+                return account
+
+        # Fallback: last4 + institution + account_type
         query = self.db.query(Account).filter(
             Account.user_id == user_id,
             Account.institution == institution,
@@ -671,7 +687,6 @@ class ImportService:
             Account.is_active == True
         )
 
-        # If last4 provided, require exact match to avoid mismatching accounts
         if last4:
             query = query.filter(Account.account_number_last4 == last4)
 
