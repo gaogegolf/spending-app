@@ -720,6 +720,9 @@ class ImportService:
                 return account
 
         # Fallback: last4 + institution + account_type
+        # But if we have a raw account number and the hash didn't match above,
+        # only match accounts that don't have a hash yet (i.e., never had a raw
+        # number set). An existing account with a *different* hash is a different card.
         query = self.db.query(Account).filter(
             Account.user_id == user_id,
             Account.institution == institution,
@@ -729,6 +732,14 @@ class ImportService:
 
         if last4:
             query = query.filter(Account.account_number_last4 == last4)
+
+        if account_number_raw:
+            # We already tried hash match and it failed, so exclude accounts
+            # that have a different hash (they're different cards with same last4)
+            query = query.filter(
+                (Account.account_number_hash == None) |
+                (Account.account_number_hash == compute_account_hash(account_number_raw))
+            )
 
         return query.first()
 
