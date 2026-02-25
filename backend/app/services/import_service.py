@@ -235,7 +235,8 @@ class ImportService:
                 'warnings': result.warnings,
                 'detected_institution': result.detected_institution,
                 'detected_account_type': result.detected_account_type,
-                'detected_account_last4': result.metadata.get('account_last4') if result.metadata else None
+                'detected_account_last4': result.metadata.get('account_last4') if result.metadata else None,
+                'detected_account_number_raw': result.metadata.get('account_number_raw') if result.metadata else None
             }
 
         except Exception as e:
