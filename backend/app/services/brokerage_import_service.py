@@ -30,14 +30,9 @@ from app.services.file_parser.vanguard_brokerage_parser import VanguardBrokerage
 from app.services.file_parser.wealthfront_brokerage_parser import WealthfrontBrokerageParser
 from app.services.file_parser.equatex_brokerage_parser import EquatexBrokerageParser
 from app.config import settings
+from app.services.account_hash import compute_account_hash
 
 logger = logging.getLogger(__name__)
-
-
-def compute_account_hash(raw_account_number: str) -> str:
-    """Compute SHA256 hash of normalized account number."""
-    normalized = raw_account_number.replace("-", "").replace(" ", "").strip().upper()
-    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 class BrokerageImportService:
