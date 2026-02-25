@@ -1013,6 +1013,17 @@ class PDFParser(BaseParser):
                 if text:
                     all_text += text + "\n"
 
+            # Try to extract account number
+            account_last4 = None
+            account_number_raw = None
+            wf_match = re.search(
+                r'(?:Account|Card)\s+(?:Number\s+)?(?:Ending\s+(?:in[:\s]*)?)(\d{4})',
+                all_text, re.IGNORECASE
+            )
+            if wf_match:
+                account_last4 = wf_match.group(1)
+                account_number_raw = account_last4
+
             # Parse transactions from text
             transactions = self._extract_wellsfargo_transactions(all_text)
             institution, account_type = self._get_institution_info('wellsfargo')
@@ -1023,7 +1034,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Wells Fargo statement"],
                     warnings=warnings,
-                    metadata={'format': 'wellsfargo'},
+                    metadata={'format': 'wellsfargo', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1037,6 +1048,8 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'wellsfargo',
+                    'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1342,6 +1355,17 @@ class PDFParser(BaseParser):
                 if text:
                     all_text += text + "\n"
 
+            # Try to extract account number
+            account_last4 = None
+            account_number_raw = None
+            co_match = re.search(
+                r'(?:Account|Card)\s+(?:No\.?\s+)?(?:Ending\s+(?:in[:\s]*)?)(\d{4})',
+                all_text, re.IGNORECASE
+            )
+            if co_match:
+                account_last4 = co_match.group(1)
+                account_number_raw = account_last4
+
             # Parse transactions from text
             transactions = self._extract_capitalone_transactions(all_text)
             institution, account_type = self._get_institution_info('capitalone')
@@ -1352,7 +1376,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Capital One statement"],
                     warnings=warnings,
-                    metadata={'format': 'capitalone'},
+                    metadata={'format': 'capitalone', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1366,6 +1390,8 @@ class PDFParser(BaseParser):
                     'total_transactions': len(transactions),
                     'source': 'pdf',
                     'format': 'capitalone',
+                    'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
@@ -1889,6 +1915,14 @@ class PDFParser(BaseParser):
                 if text:
                     all_text += text + "\n"
 
+            # Extract account last4 from Ally Bank format: "xxxxxx1127"
+            account_last4 = None
+            account_number_raw = None
+            ally_match = re.search(r'x{4,6}(\d{4})', all_text)
+            if ally_match:
+                account_last4 = ally_match.group(1)
+                account_number_raw = account_last4
+
             # Parse transactions from text
             transactions = self._extract_allybank_transactions(all_text)
             institution, account_type = self._get_institution_info('allybank')
@@ -1899,7 +1933,7 @@ class PDFParser(BaseParser):
                     transactions=[],
                     errors=["No transactions found in Ally Bank statement"],
                     warnings=warnings,
-                    metadata={'format': 'allybank'},
+                    metadata={'format': 'allybank', 'account_last4': account_last4, 'account_number_raw': account_number_raw},
                     detected_institution=institution,
                     detected_account_type=account_type
                 )
@@ -1919,6 +1953,8 @@ class PDFParser(BaseParser):
                     'format': 'allybank',
                     'balances': balances,
                     'statement_date': statement_date,
+                    'account_last4': account_last4,
+                    'account_number_raw': account_number_raw,
                 },
                 detected_institution=institution,
                 detected_account_type=account_type
