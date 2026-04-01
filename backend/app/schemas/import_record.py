@@ -63,6 +63,8 @@ class ImportStatusResponse(BaseModel):
     error_message: Optional[str]
     transactions_imported: int
     transactions_duplicate: int
+    transactions_quarantined: int = 0
+    quarantine_resolved: bool = True
     created_at: datetime
     completed_at: Optional[datetime]
 

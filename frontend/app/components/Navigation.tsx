@@ -9,6 +9,7 @@ const navLinks = [
   { href: '/net-worth', label: 'Net Worth' },
   { href: '/accounts', label: 'Accounts' },
   { href: '/imports', label: 'Import' },
+  { href: '/quarantine', label: 'Quarantine' },
   { href: '/transactions', label: 'Transactions' },
   { href: '/reports', label: 'Reports' },
   { href: '/merchant-categories', label: 'Merchants' },
